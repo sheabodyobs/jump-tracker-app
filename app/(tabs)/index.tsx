@@ -157,6 +157,16 @@ export default function HomeScreen() {
     contactDetected: false,
   };
 
+  const formatSeconds = (value: number | null, digits = 3) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+    return value.toFixed(digits);
+  };
+
+  const formatNumber = (value: number | null) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+    return value.toString();
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Jump Tracker</Text>
@@ -235,25 +245,25 @@ export default function HomeScreen() {
             <Text style={styles.row}>
               GCT (s):{" "}
               <Text style={styles.value}>
-                {metrics.gctSeconds !== null ? metrics.gctSeconds.toFixed(3) : "—"}
+                {formatSeconds(metrics.gctSeconds)}
               </Text>
             </Text>
 
             <Text style={styles.row}>
-              GCT (ms): <Text style={styles.value}>{metrics.gctMs ?? "—"}</Text>
+              GCT (ms): <Text style={styles.value}>{formatNumber(metrics.gctMs)}</Text>
             </Text>
 
             <Text style={styles.row}>
               Flight (s):{" "}
               <Text style={styles.value}>
-                {metrics.flightSeconds !== null ? metrics.flightSeconds.toFixed(3) : "—"}
+                {formatSeconds(metrics.flightSeconds)}
               </Text>
             </Text>
 
             <Text style={styles.row}>
               GCT L/R (ms):{" "}
               <Text style={styles.value}>
-                {(metrics.gctMsLeft ?? "—").toString()} / {(metrics.gctMsRight ?? "—").toString()}
+                {formatNumber(metrics.gctMsLeft)} / {formatNumber(metrics.gctMsRight)}
               </Text>
             </Text>
           </View>
@@ -262,11 +272,11 @@ export default function HomeScreen() {
             <Text style={styles.sectionTitle}>Events</Text>
 
             <Text style={styles.row}>
-              Takeoff t: <Text style={styles.value}>{events.takeoff?.t ?? "—"}</Text>
+              Takeoff t: <Text style={styles.value}>{formatNumber(events.takeoff?.t ?? null)}</Text>
             </Text>
 
             <Text style={styles.row}>
-              Landing t: <Text style={styles.value}>{events.landing?.t ?? "—"}</Text>
+              Landing t: <Text style={styles.value}>{formatNumber(events.landing?.t ?? null)}</Text>
             </Text>
           </View>
 
@@ -283,6 +293,11 @@ export default function HomeScreen() {
                 {(safe.groundSummary?.confidence ?? 0).toFixed(2)}
               </Text>
             </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Notes</Text>
+            <Text style={styles.muted}>{notes.length ? notes.join("\n") : "—"}</Text>
           </View>
         </>
       ) : (

@@ -160,21 +160,7 @@ export type JumpAnalysis = {
 
 const kp0 = (): Keypoint2D => ({ x: null, y: null, confidence: 0 });
 
-const leg0 = (): LegJoints2D => ({
-  hip: kp0(),
-  knee: kp0(),
-  ankle: kp0(),
-  heel: kp0(),
-  toe: kp0(),
-});
-
 const ground0: GroundModel2D = { type: "unknown", confidence: 0 };
-
-const contact0 = (): ContactProbability => ({
-  heel: 0,
-  toe: 0,
-  inContact: false,
-});
 
 export const EMPTY_ANALYSIS: JumpAnalysis = {
   version: "0.2.0",

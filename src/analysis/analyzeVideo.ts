@@ -44,7 +44,7 @@ export async function analyzeVideo(uri: string): Promise<JumpAnalysis> {
     const message =
       e instanceof Error ? e.message : "unknown error";
 
-    return {
+    const draft: JumpAnalysis = {
       ...EMPTY_ANALYSIS,
       status: "error",
       quality: {
@@ -66,5 +66,7 @@ export async function analyzeVideo(uri: string): Promise<JumpAnalysis> {
         code: "ANALYZE_VIDEO_FAILED",
       },
     };
+
+    return applyConfidenceGate(draft);
   }
 }

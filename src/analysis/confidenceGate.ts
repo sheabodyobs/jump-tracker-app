@@ -155,10 +155,14 @@ function hasFrames(a: JumpAnalysis): boolean {
   return Array.isArray(a.frames) && a.frames.length > 0;
 }
 
-function requiredOverallConfidence(a: JumpAnalysis, config: GateConfig): { required: number; reason: string } {
-  if (hasFrames(a)) return { required: config.minOverallConfidence, reason: "frames-present" };
-  if (hasValidEvents(a)) return { required: config.minOverallConfidenceEventsOnly, reason: "events-only" };
-  return { required: Math.max(config.minOverallConfidenceEventsOnly, 0.9), reason: "no-evidence" };
+function requiredOverallConfidence(
+  framesOk: boolean,
+  eventsOk: boolean,
+  config: GateConfig
+): { required: number; reason: string } {
+  if (framesOk) return { required: config.minOverallConfidence, reason: "frames-present" };
+  if (eventsOk) return { required: config.minOverallConfidenceEventsOnly, reason: "events-only" };
+  return { required: config.minOverallConfidenceEventsOnly, reason: "no-evidence" };
 }
 
 function hardFail(a: JumpAnalysis, notes: string[], config: GateConfig): JumpAnalysis {
@@ -194,16 +198,6 @@ function hardFail(a: JumpAnalysis, notes: string[], config: GateConfig): JumpAna
   };
 }
 
-function redactIfLowConfidence<T>(
-  value: T,
-  confidence: number,
-  min: number
-): { value: T | null; ok: boolean } {
-  const c = clamp01(confidence);
-  if (c < min) return { value: null, ok: false };
-  return { value, ok: true };
-}
-
 export function applyConfidenceGate(
   draft: JumpAnalysis,
   override?: Partial<GateConfig>
@@ -232,7 +226,7 @@ export function applyConfidenceGate(
 
   // Dynamic overall threshold based on evidence density
   const overall = clamp01(draft?.quality?.overallConfidence ?? 0);
-  const { required, reason } = requiredOverallConfidence(draft, config);
+  const { required, reason } = requiredOverallConfidence(framesOk, eventsOk, config);
 
   if (overall < required) {
     notes.push(`Low confidence (${overall.toFixed(2)} < ${required.toFixed(2)}; ${reason}).`);
@@ -252,6 +246,42 @@ export function applyConfidenceGate(
     notes.includes("Ground not detected.")
   ) {
     return hardFail(draft, notes, config);
+  }
+
+  // Sanity checks (hard fail)
+  const gctSeconds = draft.metrics?.gctSeconds ?? null;
+  const gctMs = draft.metrics?.gctMs ?? null;
+  const flightSeconds = draft.metrics?.flightSeconds ?? null;
+  const takeoffT = draft.events?.takeoff?.t ?? null;
+  const landingT = draft.events?.landing?.t ?? null;
+
+  if (gctSeconds !== null) {
+    if (!isFiniteNonNeg(gctSeconds) || gctSeconds > config.maxGctSeconds) {
+      notes.push("GCT seconds failed sanity checks.");
+      return hardFail(draft, notes, config);
+    }
+  }
+
+  if (flightSeconds !== null) {
+    if (!isFiniteNonNeg(flightSeconds) || flightSeconds > config.maxFlightSeconds) {
+      notes.push("Flight time failed sanity checks.");
+      return hardFail(draft, notes, config);
+    }
+  }
+
+  if (gctSeconds !== null && gctMs !== null) {
+    const msFromS = Math.round(gctSeconds * 1000);
+    if (!isFiniteNonNeg(gctMs) || Math.abs(msFromS - gctMs) > 35) {
+      notes.push("GCT ms/s mismatch.");
+      return hardFail(draft, notes, config);
+    }
+  }
+
+  if (typeof takeoffT === "number" && typeof landingT === "number") {
+    if (Number.isFinite(takeoffT) && Number.isFinite(landingT) && landingT <= takeoffT) {
+      notes.push("Landing time must be after takeoff.");
+      return hardFail(draft, notes, config);
+    }
   }
 
   // ---- Per-metric gating starts here ----
