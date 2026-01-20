@@ -1,50 +1,66 @@
-# Welcome to your Expo app 👋
+Jump Tracker (MVP)
+Jump Tracker is an iPhone app that analyzes jump and plyometric movements from video.
+The goal is to measure ground contact time (GCT) and basic jump events using accessible hardware (an iPhone camera), then summarize results in plain language.
+This is an early MVP focused on correctness, clarity, and iteration speed — not polish.
+What it does
+Lets you pick a video from your iPhone Photos library
+Detects takeoff and landing events (mocked or real analysis)
+Computes key metrics:
+Ground Contact Time (GCT)
+Flight time
+Displays results safely even when analysis is pending
+Generates a simple AI-style summary from the computed metrics
+Supports a mock analysis mode for fast UI iteration
+Core idea
+Video → analysis → metrics → summary
+Single-camera iPhone video is analyzed to classify contact vs flight.
+From that signal we derive biomechanical events and metrics that are easy to interpret.
+Tech stack
+Expo + React Native
+Expo Router
+TypeScript
+expo-image-picker (video input)
+Modular, spec-first analysis layer (separate from UI)
+Project structure (important)
+app/                     # Expo Router screens (UI only)
+  (tabs)/index.tsx       # Main screen
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
-
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+src/
+  analysis/
+    jumpAnalysisContract.ts  # Canonical JumpAnalysis schema
+    mockAnalysis.ts          # Mock analysis output
+    analyzeVideo.ts          # Video analysis entry point (WIP)
+Important rule:
+Only UI code lives in app/.
+All analysis logic and schemas live outside app/ to avoid routing issues.
+Analysis contract
+The UI consumes a single, stable object:
+JumpAnalysis
+It always exists and has a status:
+pending
+complete
+error
+This guarantees the app never crashes while analysis is running or missing.
+Current status
+UI fully wired to a safe analysis contract
+Mock analysis working end-to-end
+Video picking from Photos implemented
+Real video analysis stubbed (next step)
+How to run
+From the project root:
+npx expo start -c
+Then:
+Open Expo Go on your iPhone
+Scan the QR code
+Use Mock to test metrics or Pick video to prepare for real analysis
+Roadmap (short)
+Replace mock with basic frame-based contact detection
+Add session logging (AsyncStorage)
+Improve confidence scoring
+Explore on-device vs server-side analysis
+Expand summaries and training guidance
+Philosophy
+Spec-first
+Stable contracts
+No undefined state
+Fast iteration over premature optimization
