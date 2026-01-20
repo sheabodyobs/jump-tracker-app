@@ -1,46 +1,44 @@
-// use the locally declared JumpAnalysis type (no self-import)
-
 export type JumpEvent = {
-  t: number;
-  frame: number;
-  confidence: number;
+  t: number | null;
+  frame: number | null;
+  confidence: number; // 0..1
 };
 
 export type FootAngleDeg = {
-  takeoff: number;
-  landing: number;
-  confidence: number;
+  takeoff: number | null;
+  landing: number | null;
+  confidence: number; // 0..1
 };
 
 export type JumpMetrics = {
-  gctSeconds: number;
-  gctMs: number;
-  flightSeconds: number;
+  gctSeconds: number | null;
+  gctMs: number | null;
+  flightSeconds: number | null;
   footAngleDeg: FootAngleDeg;
 };
 
 export type JumpAnalysis = {
-  version: string;
-  status: string;
+  version: "0.1.0";
+  status: "pending" | "complete" | "error";
   metrics: JumpMetrics;
   events: { takeoff: JumpEvent; landing: JumpEvent };
-  quality: { overallConfidence: number; notes?: string[] };
-  aiSummary?: { text: string; tags?: string[] };
+  quality: { overallConfidence: number; notes: string[] };
+  aiSummary: { text: string; tags: string[] };
 };
 
-export const MOCK_ANALYSIS: JumpAnalysis = {
+export const EMPTY_ANALYSIS: JumpAnalysis = {
   version: "0.1.0",
-  status: "complete",
+  status: "pending",
   metrics: {
-    gctSeconds: 0.18,
-    gctMs: 180,
-    flightSeconds: 0.42,
-    footAngleDeg: { takeoff: 12, landing: 14, confidence: 0.6 },
+    gctSeconds: null,
+    gctMs: null,
+    flightSeconds: null,
+    footAngleDeg: { takeoff: null, landing: null, confidence: 0 },
   },
   events: {
-    takeoff: { t: 1200, frame: 36, confidence: 0.8 },
-    landing: { t: 1380, frame: 41, confidence: 0.8 },
+    takeoff: { t: null, frame: null, confidence: 0 },
+    landing: { t: null, frame: null, confidence: 0 },
   },
-  quality: { overallConfidence: 0.75, notes: ["Mock data"] },
-  aiSummary: { text: "Quick contact (~180ms).", tags: ["gct"] },
+  quality: { overallConfidence: 0, notes: [] },
+  aiSummary: { text: "", tags: [] },
 };
