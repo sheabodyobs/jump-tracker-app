@@ -213,13 +213,27 @@ export default function HomeScreen() {
           <Text style={styles.value}>{overallConfidence.toFixed(2)}</Text>
         </Text>
 
-        <Text style={styles.row}>
-          Notes:{" "}
+            <Text style={styles.row}>
+              Notes:{" "}
+              <Text style={styles.value}>
+                {notes.length ? notes.join(", ") : "—"}
+              </Text>
+            </Text>
+          </View>
+        </>
+      ) : (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Metrics hidden</Text>
           <Text style={styles.value}>
-            {notes.length ? notes.join(", ") : "—"}
+            {safe.status === "error"
+              ? "Insufficient confidence to report metrics."
+              : "Analysis not complete yet."}
           </Text>
-        </Text>
-      </View>
+          <Text style={styles.muted}>
+            {notes.length ? notes.join("\n") : ""}
+          </Text>
+        </View>
+      )}
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Summary</Text>
