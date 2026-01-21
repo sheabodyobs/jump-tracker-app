@@ -11,7 +11,6 @@ import {
 import { analyzeVideo } from "../../src/analysis/analyzeVideo";
 import { MOCK_ANALYSIS } from "../../src/analysis/mockAnalysis";
 import { analyzePogoSideView } from "../../src/analysis/pogoSideViewAnalyzer";
-import { getIosVideoMetadata } from "../../src/video/iosAvFoundationFrameProvider";
 import { selfTestExtractFrames } from "../../src/video/selfTestExtractFrames";
 
 /**
@@ -341,7 +340,7 @@ export default function HomeScreen() {
             <Text style={styles.row}>
               GCT L/R (ms):{" "}
               <Text style={styles.value}>
-                {formatNumber(metrics.gctMsLeft)} / {formatNumber(metrics.gctMsRight)}
+                {formatNumber(metrics.gctMsLeft ?? null)} / {formatNumber(metrics.gctMsRight ?? null)}
               </Text>
             </Text>
           </View>

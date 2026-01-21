@@ -192,7 +192,7 @@ export const EMPTY_ANALYSIS: JumpAnalysis = {
   },
   frames: [],
   groundSummary: ground0,
-  capture: {},
+  
   quality: {
     overallConfidence: 0,
     notes: [],
