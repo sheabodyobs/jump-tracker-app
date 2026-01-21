@@ -1,6 +1,7 @@
 // src/analysis/analyzeVideo.ts
 import { applyConfidenceGate } from "./confidenceGate";
 import { type JumpAnalysis, EMPTY_ANALYSIS } from "./jumpAnalysisContract";
+import { analyzePogoSideView } from "./pogoSideViewAnalyzer";
 import { MOCK_ANALYSIS } from "./mockAnalysis";
 
 /**
@@ -30,11 +31,22 @@ export async function analyzeVideo(uri: string): Promise<JumpAnalysis> {
     // → detectContact
     // → deriveMetrics
 
-    // Draft result (mocked, contract-complete)
-    const draft: JumpAnalysis = {
-      ...MOCK_ANALYSIS,
-      status: "complete",
-    };
+    let draft: JumpAnalysis;
+
+    try {
+      draft = await analyzePogoSideView(uri);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown analyzer error";
+      draft = {
+        ...MOCK_ANALYSIS,
+        status: "complete",
+        measurementStatus: "synthetic_placeholder",
+        quality: {
+          ...MOCK_ANALYSIS.quality,
+          notes: [...(MOCK_ANALYSIS.quality?.notes ?? []), `Analyzer fallback: ${message}`],
+        },
+      };
+    }
 
     // Enforce confidence gate
     // If confidence < threshold, this will downgrade status
@@ -44,9 +56,10 @@ export async function analyzeVideo(uri: string): Promise<JumpAnalysis> {
     const message =
       e instanceof Error ? e.message : "unknown error";
 
-    return {
+    const draft: JumpAnalysis = {
       ...EMPTY_ANALYSIS,
       status: "error",
+      measurementStatus: "synthetic_placeholder",
       quality: {
         overallConfidence: 0,
         notes: [`Analyze failed: ${message}`],
@@ -66,5 +79,7 @@ export async function analyzeVideo(uri: string): Promise<JumpAnalysis> {
         code: "ANALYZE_VIDEO_FAILED",
       },
     };
+
+    return applyConfidenceGate(draft);
   }
 }

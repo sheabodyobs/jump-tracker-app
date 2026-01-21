@@ -1,7 +1,7 @@
 // app/(tabs)/index.tsx
 import * as ImagePicker from "expo-image-picker";
 import React, { useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import {
   EMPTY_ANALYSIS,
@@ -10,6 +10,9 @@ import {
 
 import { analyzeVideo } from "../../src/analysis/analyzeVideo";
 import { MOCK_ANALYSIS } from "../../src/analysis/mockAnalysis";
+import { analyzePogoSideView } from "../../src/analysis/pogoSideViewAnalyzer";
+import { getIosVideoMetadata } from "../../src/video/iosAvFoundationFrameProvider";
+import { selfTestExtractFrames } from "../../src/video/selfTestExtractFrames";
 
 /**
  * Runtime-safe fallback
@@ -25,6 +28,7 @@ const FALLBACK_ANALYSIS: JumpAnalysis = {
 const HARD_FALLBACK: JumpAnalysis = {
   version: "0.2.0",
   status: "pending",
+  measurementStatus: "synthetic_placeholder",
   metrics: {
     gctSeconds: null,
     gctMs: null,
@@ -60,7 +64,15 @@ function coerceAnalysis(a: unknown): JumpAnalysis {
   const obj = a as Partial<JumpAnalysis>;
 
   // Minimal guards for app safety. If anything is missing, fall back.
-  if (!obj.version || !obj.status || !obj.metrics || !obj.events || !obj.quality || !obj.aiSummary) {
+  if (
+    !obj.version ||
+    !obj.status ||
+    !obj.measurementStatus ||
+    !obj.metrics ||
+    !obj.events ||
+    !obj.quality ||
+    !obj.aiSummary
+  ) {
     return HARD_FALLBACK;
   }
 
@@ -76,6 +88,10 @@ export default function HomeScreen() {
   const [analysis, setAnalysis] = useState<JumpAnalysis>(initial);
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [frameTestReport, setFrameTestReport] = useState<string>("");
+  const [groundYInput, setGroundYInput] = useState<string>("");
+  const [roiPreset, setRoiPreset] = useState<"small" | "medium" | "large">("medium");
+  const [showOverlay, setShowOverlay] = useState(false);
 
   async function pickVideo() {
     try {
@@ -119,6 +135,67 @@ export default function HomeScreen() {
     }
   }
 
+  async function runFrameTest() {
+    if (!videoUri) {
+      Alert.alert("Frame Test", "Pick a video first.");
+      return;
+    }
+
+    setFrameTestReport("Running frame extraction test...");
+
+    try {
+      const metadata = await getIosVideoMetadata(videoUri);
+      const frameBatch = await selfTestExtractFrames(videoUri);
+      const frames = frameBatch.frames ?? [];
+      const first = frames[0];
+      const last = frames[frames.length - 1];
+      const groundYValue = Number.parseFloat(groundYInput);
+      const roiPresets = {
+        small: { roiWidthPx: 64, roiHeightPx: 48, roiPaddingPx: 6 },
+        medium: {},
+        large: { roiWidthPx: 120, roiHeightPx: 90, roiPaddingPx: 6 },
+      } as const;
+      const analysisResult = await analyzePogoSideView(videoUri, {
+        ...(Number.isFinite(groundYValue) ? { groundY: groundYValue } : {}),
+        ...roiPresets[roiPreset],
+      });
+      const debug = analysisResult.analysisDebug?.groundRoi;
+      const lowerBody = analysisResult.analysisDebug?.lowerBody;
+      const scores = debug?.scores ?? {};
+      const lowerStats = lowerBody?.stats;
+      const fps = metadata.nominalFps;
+      const fpsPass = typeof fps === "number" && fps >= 120;
+      const lines = [
+        `Capture FPS: ${typeof fps === "number" ? fps.toFixed(1) : "—"} (${fpsPass ? "pass" : "fail"})`,
+        `Provider: ${frameBatch.debug?.provider ?? "unknown"}`,
+        `Measurement: ${frameBatch.measurementStatus}`,
+        `Frames: ${frames.length}`,
+        `First tMs: ${first?.tMs ?? "—"}`,
+        `Last tMs: ${last?.tMs ?? "—"}`,
+        `Size: ${first?.width ?? "—"}x${first?.height ?? "—"}`,
+        debug?.groundLine ? `GroundY: ${debug.groundLine.y}px` : "GroundY: —",
+        debug?.roi
+          ? `ROI: x${debug.roi.x}, y${debug.roi.y}, w${debug.roi.w}, h${debug.roi.h}`
+          : "ROI: —",
+        `ContactScore min/mean/max: ${scores.contactScoreMin?.toFixed?.(2) ?? "—"} / ${
+          scores.contactScoreMean?.toFixed?.(2) ?? "—"
+        } / ${scores.contactScoreMax?.toFixed?.(2) ?? "—"}`,
+        `LowerBody valid/total: ${lowerStats?.validFrames ?? 0}/${frames.length}`,
+        `LowerBody area min/max: ${lowerStats?.areaMin ?? "—"} / ${lowerStats?.areaMax ?? "—"}`,
+        `LowerBody centroidY min/max: ${lowerStats?.centroidYMin ?? "—"} / ${lowerStats?.centroidYMax ?? "—"}`,
+        `LowerBody bottomEnergy min/max: ${lowerStats?.bottomBandEnergyMin ?? "—"} / ${
+          lowerStats?.bottomBandEnergyMax ?? "—"
+        }`,
+        `Takeoff: ${analysisResult.events.takeoff.t ?? "—"}s`,
+        `Landing: ${analysisResult.events.landing.t ?? "—"}s`,
+        frameBatch.error ? `Error: ${frameBatch.error.code} ${frameBatch.error.message}` : "Error: none",
+      ];
+      setFrameTestReport(lines.join("\n"));
+    } catch {
+      setFrameTestReport("Frame extraction test failed.");
+    }
+  }
+
   function setMock() {
     // MOCK_ANALYSIS should already match the contract, but keep it safe.
     setAnalysis(coerceAnalysis(MOCK_ANALYSIS));
@@ -132,6 +209,7 @@ export default function HomeScreen() {
 
   const safe = coerceAnalysis(analysis);
   const isComplete = safe.status === "complete";
+  const isRealMeasurement = safe.measurementStatus === "real";
 
   const metrics = safe.metrics;
   const events = safe.events;
@@ -155,6 +233,16 @@ export default function HomeScreen() {
     groundDetected,
     jointsTracked: false,
     contactDetected: false,
+  };
+
+  const formatSeconds = (value: number | null, digits = 3) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+    return value.toFixed(digits);
+  };
+
+  const formatNumber = (value: number | null) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+    return value.toString();
   };
 
   return (
@@ -183,6 +271,10 @@ export default function HomeScreen() {
         <Pressable style={[styles.button, styles.buttonSecondary]} onPress={reset}>
           <Text style={styles.buttonText}>Reset</Text>
         </Pressable>
+
+        <Pressable style={[styles.button, styles.buttonSecondary]} onPress={runFrameTest}>
+          <Text style={styles.buttonText}>Test frames</Text>
+        </Pressable>
       </View>
 
       <View style={styles.card}>
@@ -196,6 +288,14 @@ export default function HomeScreen() {
         <Text style={styles.sectionTitle}>Status</Text>
         <Text style={styles.value}>{safe.status}</Text>
         <Text style={styles.muted}>v{safe.version}</Text>
+        <Text style={styles.muted}>
+          Measurement: {isRealMeasurement ? "real" : "simulated (not real)"}
+        </Text>
+        {!isRealMeasurement && (
+          <Text style={styles.warning}>
+            Simulated output. Not a real measurement.
+          </Text>
+        )}
       </View>
 
       <View style={styles.card}>
@@ -227,7 +327,7 @@ export default function HomeScreen() {
           - render metrics ONLY when status === "complete"
           - otherwise show explanation + notes
       */}
-      {isComplete ? (
+      {isComplete && isRealMeasurement ? (
         <>
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Primary</Text>
@@ -235,25 +335,25 @@ export default function HomeScreen() {
             <Text style={styles.row}>
               GCT (s):{" "}
               <Text style={styles.value}>
-                {metrics.gctSeconds !== null ? metrics.gctSeconds.toFixed(3) : "—"}
+                {formatSeconds(metrics.gctSeconds)}
               </Text>
             </Text>
 
             <Text style={styles.row}>
-              GCT (ms): <Text style={styles.value}>{metrics.gctMs ?? "—"}</Text>
+              GCT (ms): <Text style={styles.value}>{formatNumber(metrics.gctMs)}</Text>
             </Text>
 
             <Text style={styles.row}>
               Flight (s):{" "}
               <Text style={styles.value}>
-                {metrics.flightSeconds !== null ? metrics.flightSeconds.toFixed(3) : "—"}
+                {formatSeconds(metrics.flightSeconds)}
               </Text>
             </Text>
 
             <Text style={styles.row}>
               GCT L/R (ms):{" "}
               <Text style={styles.value}>
-                {(metrics.gctMsLeft ?? "—").toString()} / {(metrics.gctMsRight ?? "—").toString()}
+                {formatNumber(metrics.gctMsLeft)} / {formatNumber(metrics.gctMsRight)}
               </Text>
             </Text>
           </View>
@@ -262,11 +362,11 @@ export default function HomeScreen() {
             <Text style={styles.sectionTitle}>Events</Text>
 
             <Text style={styles.row}>
-              Takeoff t: <Text style={styles.value}>{events.takeoff?.t ?? "—"}</Text>
+              Takeoff t: <Text style={styles.value}>{formatNumber(events.takeoff?.t ?? null)}</Text>
             </Text>
 
             <Text style={styles.row}>
-              Landing t: <Text style={styles.value}>{events.landing?.t ?? "—"}</Text>
+              Landing t: <Text style={styles.value}>{formatNumber(events.landing?.t ?? null)}</Text>
             </Text>
           </View>
 
@@ -284,12 +384,19 @@ export default function HomeScreen() {
               </Text>
             </Text>
           </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Notes</Text>
+            <Text style={styles.muted}>{notes.length ? notes.join("\n") : "—"}</Text>
+          </View>
         </>
       ) : (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Metrics hidden</Text>
           <Text style={styles.value}>
-            {safe.status === "error"
+            {!isRealMeasurement
+              ? "Simulated output: measurements unavailable."
+              : safe.status === "error"
               ? "Insufficient confidence to report metrics."
               : "Analysis not complete yet."}
           </Text>
@@ -308,6 +415,48 @@ export default function HomeScreen() {
           {summaryTags.length ? summaryTags.map((t) => `#${t}`).join(" ") : ""}
         </Text>
       </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Frame extraction self-test</Text>
+        <Text style={styles.row}>Ground Y (px)</Text>
+        <TextInput
+          style={styles.input}
+          value={groundYInput}
+          onChangeText={setGroundYInput}
+          placeholder="Auto (leave blank)"
+          keyboardType="numeric"
+        />
+        <Text style={styles.row}>ROI preset</Text>
+        <View style={styles.actions}>
+          {(["small", "medium", "large"] as const).map((preset) => (
+            <Pressable
+              key={preset}
+              style={[
+                styles.button,
+                styles.buttonSecondary,
+                roiPreset === preset && styles.buttonActive,
+              ]}
+              onPress={() => setRoiPreset(preset)}
+            >
+              <Text style={styles.buttonText}>{preset}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Pressable
+          style={[styles.button, styles.buttonSecondary]}
+          onPress={() => setShowOverlay((prev) => !prev)}
+        >
+          <Text style={styles.buttonText}>
+            {showOverlay ? "Hide debug overlay" : "Show debug overlay"}
+          </Text>
+        </Pressable>
+        {showOverlay && (
+          <Text style={styles.muted}>
+            Overlay preview is unavailable without react-native-svg. Numeric values shown below.
+          </Text>
+        )}
+        <Text style={styles.muted}>{frameTestReport || "—"}</Text>
+      </View>
     </View>
   );
 }
@@ -325,6 +474,7 @@ const styles = StyleSheet.create({
   },
   buttonSecondary: { opacity: 0.7 },
   buttonDisabled: { opacity: 0.4 },
+  buttonActive: { opacity: 1, borderColor: "#2563eb" },
   buttonText: { fontSize: 14, fontWeight: "600" },
 
   card: {
@@ -337,4 +487,12 @@ const styles = StyleSheet.create({
   row: { fontSize: 14 },
   value: { fontSize: 14, fontWeight: "600" },
   muted: { fontSize: 12, opacity: 0.7 },
+  warning: { fontSize: 12, fontWeight: "600", color: "#b45309" },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+  },
 });
