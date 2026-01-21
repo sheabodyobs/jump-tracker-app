@@ -371,7 +371,7 @@ export default function HomeScreen() {
             <Text style={styles.row}>
               GCT L/R (ms):{" "}
               <Text style={styles.value}>
-                {formatNumber(metrics.gctMsLeft)} / {formatNumber(metrics.gctMsRight)}
+                {formatNumber(metrics.gctMsLeft ?? null)} / {formatNumber(metrics.gctMsRight ?? null)}
               </Text>
             </Text>
           </View>

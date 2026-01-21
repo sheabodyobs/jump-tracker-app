@@ -999,8 +999,16 @@ export function runPogoAnalyzerSelfTest(): JumpAnalysis {
       footAngleDeg: { takeoff: null, landing: null, confidence: 0 },
     },
     events: {
-      takeoff: { t: null, frame: takeoffIndex >= 0 ? takeoffIndex : null, confidence: 0.4 },
-      landing: { t: null, frame: landingIndex >= 0 ? landingIndex : null, confidence: 0.4 },
+      takeoff: {
+        t: null,
+        frame: typeof takeoffIndex === "number" ? takeoffIndex : null,
+        confidence: 0.4,
+      },
+      landing: {
+        t: null,
+        frame: typeof landingIndex === "number" ? landingIndex : null,
+        confidence: 0.4,
+      },
     },
     frames: analyzedFrames,
     groundSummary,
