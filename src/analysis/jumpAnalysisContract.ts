@@ -178,6 +178,40 @@ export type JumpAnalysis = {
         bottomBandEnergyMax: number;
       };
     };
+    foot?: {
+      notes: string[];
+      thresholds: {
+        motionThresh: number;
+        darkThresh?: number;
+        minFootArea: number;
+        groundBandPx: number;
+      };
+      stats: {
+        validFrames: number;
+        areaMin: number;
+        areaMax: number;
+        angleMin: number;
+        angleMax: number;
+        strikeBiasMin: number;
+        strikeBiasMax: number;
+        groundBandDensityMin: number;
+        groundBandDensityMax: number;
+      };
+      eventSignals?: {
+        takeoff?: {
+          tMs: number;
+          contactScore?: number;
+          bottomBandEnergy?: number;
+          groundBandDensity?: number;
+        };
+        landing?: {
+          tMs: number;
+          contactScore?: number;
+          bottomBandEnergy?: number;
+          groundBandDensity?: number;
+        };
+      };
+    };
   };
 
   // Optional error info if status === "error"

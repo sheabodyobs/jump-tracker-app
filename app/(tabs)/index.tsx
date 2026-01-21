@@ -161,8 +161,11 @@ export default function HomeScreen() {
       });
       const debug = analysisResult.analysisDebug?.groundRoi;
       const lowerBody = analysisResult.analysisDebug?.lowerBody;
+      const footDebug = analysisResult.analysisDebug?.foot;
       const scores = debug?.scores ?? {};
       const lowerStats = lowerBody?.stats;
+      const footStats = footDebug?.stats;
+      const footEvents = footDebug?.eventSignals;
       const fps = metadata.nominalFps;
       const fpsPass = typeof fps === "number" && fps >= 120;
       const lines = [
@@ -185,6 +188,21 @@ export default function HomeScreen() {
         `LowerBody centroidY min/max: ${lowerStats?.centroidYMin ?? "—"} / ${lowerStats?.centroidYMax ?? "—"}`,
         `LowerBody bottomEnergy min/max: ${lowerStats?.bottomBandEnergyMin ?? "—"} / ${
           lowerStats?.bottomBandEnergyMax ?? "—"
+        }`,
+        `Foot valid/total: ${footStats?.validFrames ?? 0}/${frames.length}`,
+        `Foot area min/max: ${footStats?.areaMin ?? "—"} / ${footStats?.areaMax ?? "—"}`,
+        `Foot angle min/max: ${footStats?.angleMin ?? "—"} / ${footStats?.angleMax ?? "—"}`,
+        `Foot strikeBias min/max: ${footStats?.strikeBiasMin ?? "—"} / ${footStats?.strikeBiasMax ?? "—"}`,
+        `Foot density min/max: ${footStats?.groundBandDensityMin ?? "—"} / ${footStats?.groundBandDensityMax ?? "—"}`,
+        `Takeoff signals: t=${footEvents?.takeoff?.tMs ?? "—"}ms, contact=${
+          footEvents?.takeoff?.contactScore?.toFixed?.(2) ?? "—"
+        }, bottom=${footEvents?.takeoff?.bottomBandEnergy?.toFixed?.(2) ?? "—"}, density=${
+          footEvents?.takeoff?.groundBandDensity?.toFixed?.(2) ?? "—"
+        }`,
+        `Landing signals: t=${footEvents?.landing?.tMs ?? "—"}ms, contact=${
+          footEvents?.landing?.contactScore?.toFixed?.(2) ?? "—"
+        }, bottom=${footEvents?.landing?.bottomBandEnergy?.toFixed?.(2) ?? "—"}, density=${
+          footEvents?.landing?.groundBandDensity?.toFixed?.(2) ?? "—"
         }`,
         `Takeoff: ${analysisResult.events.takeoff.t ?? "—"}s`,
         `Landing: ${analysisResult.events.landing.t ?? "—"}s`,
