@@ -144,7 +144,6 @@ export default function HomeScreen() {
     setFrameTestReport("Running frame extraction test...");
 
     try {
-      const metadata = await getIosVideoMetadata(videoUri);
       const frameBatch = await selfTestExtractFrames(videoUri);
       const frames = frameBatch.frames ?? [];
       const first = frames[0];
@@ -160,16 +159,8 @@ export default function HomeScreen() {
         ...roiPresets[roiPreset],
       });
       const debug = analysisResult.analysisDebug?.groundRoi;
-      const lowerBody = analysisResult.analysisDebug?.lowerBody;
-      const footDebug = analysisResult.analysisDebug?.foot;
       const scores = debug?.scores ?? {};
-      const lowerStats = lowerBody?.stats;
-      const footStats = footDebug?.stats;
-      const footEvents = footDebug?.eventSignals;
-      const fps = metadata.nominalFps;
-      const fpsPass = typeof fps === "number" && fps >= 120;
       const lines = [
-        `Capture FPS: ${typeof fps === "number" ? fps.toFixed(1) : "—"} (${fpsPass ? "pass" : "fail"})`,
         `Provider: ${frameBatch.debug?.provider ?? "unknown"}`,
         `Measurement: ${frameBatch.measurementStatus}`,
         `Frames: ${frames.length}`,
@@ -183,27 +174,6 @@ export default function HomeScreen() {
         `ContactScore min/mean/max: ${scores.contactScoreMin?.toFixed?.(2) ?? "—"} / ${
           scores.contactScoreMean?.toFixed?.(2) ?? "—"
         } / ${scores.contactScoreMax?.toFixed?.(2) ?? "—"}`,
-        `LowerBody valid/total: ${lowerStats?.validFrames ?? 0}/${frames.length}`,
-        `LowerBody area min/max: ${lowerStats?.areaMin ?? "—"} / ${lowerStats?.areaMax ?? "—"}`,
-        `LowerBody centroidY min/max: ${lowerStats?.centroidYMin ?? "—"} / ${lowerStats?.centroidYMax ?? "—"}`,
-        `LowerBody bottomEnergy min/max: ${lowerStats?.bottomBandEnergyMin ?? "—"} / ${
-          lowerStats?.bottomBandEnergyMax ?? "—"
-        }`,
-        `Foot valid/total: ${footStats?.validFrames ?? 0}/${frames.length}`,
-        `Foot area min/max: ${footStats?.areaMin ?? "—"} / ${footStats?.areaMax ?? "—"}`,
-        `Foot angle min/max: ${footStats?.angleMin ?? "—"} / ${footStats?.angleMax ?? "—"}`,
-        `Foot strikeBias min/max: ${footStats?.strikeBiasMin ?? "—"} / ${footStats?.strikeBiasMax ?? "—"}`,
-        `Foot density min/max: ${footStats?.groundBandDensityMin ?? "—"} / ${footStats?.groundBandDensityMax ?? "—"}`,
-        `Takeoff signals: t=${footEvents?.takeoff?.tMs ?? "—"}ms, contact=${
-          footEvents?.takeoff?.contactScore?.toFixed?.(2) ?? "—"
-        }, bottom=${footEvents?.takeoff?.bottomBandEnergy?.toFixed?.(2) ?? "—"}, density=${
-          footEvents?.takeoff?.groundBandDensity?.toFixed?.(2) ?? "—"
-        }`,
-        `Landing signals: t=${footEvents?.landing?.tMs ?? "—"}ms, contact=${
-          footEvents?.landing?.contactScore?.toFixed?.(2) ?? "—"
-        }, bottom=${footEvents?.landing?.bottomBandEnergy?.toFixed?.(2) ?? "—"}, density=${
-          footEvents?.landing?.groundBandDensity?.toFixed?.(2) ?? "—"
-        }`,
         `Takeoff: ${analysisResult.events.takeoff.t ?? "—"}s`,
         `Landing: ${analysisResult.events.landing.t ?? "—"}s`,
         frameBatch.error ? `Error: ${frameBatch.error.code} ${frameBatch.error.message}` : "Error: none",
@@ -371,7 +341,7 @@ export default function HomeScreen() {
             <Text style={styles.row}>
               GCT L/R (ms):{" "}
               <Text style={styles.value}>
-                {formatNumber(metrics.gctMsLeft ?? null)} / {formatNumber(metrics.gctMsRight ?? null)}
+                {formatNumber(metrics.gctMsLeft)} / {formatNumber(metrics.gctMsRight)}
               </Text>
             </Text>
           </View>

@@ -3,16 +3,13 @@ import { Platform } from "react-native";
 
 import { type JumpAnalysis, EMPTY_ANALYSIS, type AnalysisFrame, type GroundModel2D } from "./jumpAnalysisContract";
 import type { ExtractedFrame, ExtractedFrameBatch, MeasurementStatus } from "../video/FrameProvider";
-import { getIosVideoMetadata, iosAvFoundationFrameProvider } from "../video/iosAvFoundationFrameProvider";
+import { iosAvFoundationFrameProvider } from "../video/iosAvFoundationFrameProvider";
 import { computeGroundAndRoi, detectContactEventsFromSignal, type GroundRoiConfig } from "./groundRoi";
-import { trackLowerBody } from "./lowerBodyTracker";
-import { extractFootRegion } from "./footRegionExtractor";
 
 const TARGET_FPS = 30;
 const MAX_FRAMES = 36;
 const DEFAULT_SAMPLE_WINDOW_MS = 2000;
 const CONTACT_FRAME_THRESHOLD = 0.55;
-const SLOW_MO_FPS_THRESHOLD = 120;
 
 type PixelFrame = {
   width: number;
@@ -36,14 +33,6 @@ function clamp01(value: number): number {
 function mean(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((sum, v) => sum + v, 0) / values.length;
-}
-
-function median(values: number[]): number {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) return (sorted[mid - 1] + sorted[mid]) / 2;
-  return sorted[mid];
 }
 
 function extractFramesWeb(uri: string): Promise<PixelFrame[]> {
@@ -232,7 +221,6 @@ async function sampleFramesForAnalysis(uri: string): Promise<{
   pixelFrames: PixelFrame[];
   batch?: ExtractedFrameBatch;
   measurementStatus: MeasurementStatus;
-  nominalFps?: number;
 }> {
   if (Platform.OS === "ios") {
     const initialTimestamps = buildEvenTimestamps(DEFAULT_SAMPLE_WINDOW_MS, MAX_FRAMES);
@@ -258,14 +246,13 @@ async function sampleFramesForAnalysis(uri: string): Promise<{
         tMs: frame.tMs,
         data: decodeBase64(frame.dataBase64),
       }));
-      return { pixelFrames, batch, measurementStatus: "real", nominalFps: batch.nominalFps };
+      return { pixelFrames, batch, measurementStatus: "real" };
     }
 
     return {
       pixelFrames: generateSyntheticFrames(uri),
       batch,
       measurementStatus: "synthetic_placeholder",
-      nominalFps: batch.nominalFps,
     };
   }
 
@@ -517,79 +504,10 @@ function findNearestFrameIndex(frames: AnalysisFrame[], tMs: number | undefined)
   return frames.length ? bestIdx : null;
 }
 
-function findNearestSampleIndex(samples: { tMs: number }[], tMs: number | undefined) {
-  if (typeof tMs !== "number") return null;
-  let bestIdx = 0;
-  let bestDelta = Number.POSITIVE_INFINITY;
-  samples.forEach((sample, idx) => {
-    const delta = Math.abs(sample.tMs - tMs);
-    if (delta < bestDelta) {
-      bestDelta = delta;
-      bestIdx = idx;
-    }
-  });
-  return samples.length ? bestIdx : null;
-}
-
-function buildSlowMoFailure(note: string, nominalFps?: number): JumpAnalysis {
-  return {
-    ...EMPTY_ANALYSIS,
-    status: "complete",
-    measurementStatus: "synthetic_placeholder",
-    capture: {
-      nominalFps,
-    },
-    quality: {
-      overallConfidence: 0,
-      notes: [note],
-      reliability: {
-        viewOk: false,
-        groundDetected: false,
-        jointsTracked: false,
-        contactDetected: false,
-      },
-    },
-    aiSummary: {
-      text: "Slow-motion capture required.",
-      tags: ["CAPTURE_NOT_SLOWMO"],
-    },
-    analysisDebug: {
-      lowerBody: {
-        notes: [
-          `Capture FPS: ${typeof nominalFps === "number" ? nominalFps.toFixed(1) : "unknown"}`,
-        ],
-        thresholds: { motionThresh: 0, minArea: 0 },
-        stats: {
-          validFrames: 0,
-          areaMin: 0,
-          areaMax: 0,
-          centroidYMin: 0,
-          centroidYMax: 0,
-          bottomBandEnergyMin: 0,
-          bottomBandEnergyMax: 0,
-        },
-      },
-    },
-  };
-}
-
 export async function analyzePogoSideView(
   uri: string,
   config: GroundRoiConfig = {}
 ): Promise<JumpAnalysis> {
-  if (Platform.OS !== "ios") {
-    return buildSlowMoFailure("Requires iPhone Slo-Mo (≥120fps).");
-  }
-
-  const metadata = await getIosVideoMetadata(uri);
-  if (metadata.measurementStatus !== "real" || !metadata.nominalFps) {
-    return buildSlowMoFailure("Requires iPhone Slo-Mo (≥120fps).", metadata.nominalFps);
-  }
-
-  if (metadata.nominalFps < SLOW_MO_FPS_THRESHOLD) {
-    return buildSlowMoFailure("Requires iPhone Slo-Mo (≥120fps).", metadata.nominalFps);
-  }
-
   const { pixelFrames, batch, measurementStatus } = await sampleFramesForAnalysis(uri);
 
   const extractedFrames =
@@ -600,134 +518,13 @@ export async function analyzePogoSideView(
     groundLine.y,
     roi
   );
-  const lowerBodyResult =
-    measurementStatus === "real" && extractedFrames.length
-      ? trackLowerBody(extractedFrames, roi, groundLine.y)
-      : {
-          samples: [],
-          debug: {
-            notes: ["Lower-body tracker skipped (no real frames)."],
-            thresholds: { motionThresh: 0, minArea: 0 },
-            stats: {
-              validFrames: 0,
-              areaMin: 0,
-              areaMax: 0,
-              centroidYMin: 0,
-              centroidYMax: 0,
-              bottomBandEnergyMin: 0,
-              bottomBandEnergyMax: 0,
-            },
-          },
-        };
-  const footResult =
-    measurementStatus === "real" && extractedFrames.length
-      ? extractFootRegion(extractedFrames, roi, groundLine.y)
-      : {
-          samples: [],
-          debug: {
-            notes: ["Foot region extractor skipped (no real frames)."],
-            thresholds: {
-              motionThresh: 0,
-              minFootArea: 0,
-              groundBandPx: 0,
-            },
-            stats: {
-              validFrames: 0,
-              areaMin: 0,
-              areaMax: 0,
-              angleMin: 0,
-              angleMax: 0,
-              strikeBiasMin: 0,
-              strikeBiasMax: 0,
-              groundBandDensityMin: 0,
-              groundBandDensityMax: 0,
-            },
-          },
-        };
 
   const contactEvents = detectContactEventsFromSignal(
     rawSamples.map((s) => ({ tMs: s.tMs, contactScore: s.contactScore }))
   );
-  const lowerBodySamples = lowerBodyResult.samples;
-  const validLowerBody = lowerBodySamples.filter((sample) => sample.valid);
-  const areaMedian = median(validLowerBody.map((sample) => sample.area));
-  const bottomMedian = median(lowerBodySamples.map((sample) => sample.bottomBandEnergy));
-  const confirmationNotes: string[] = [];
-  const footNotes: string[] = [];
-  const footSamples = footResult.samples;
-  const footValidRatio = footSamples.length
-    ? footSamples.filter((sample) => sample.valid).length / footSamples.length
-    : 0;
-  if (footSamples.length && footValidRatio < 0.7) {
-    footNotes.push("Foot region unstable (low valid frame ratio).");
-  }
 
-  let confirmedTakeoff = contactEvents.takeoffMs;
-  if (typeof confirmedTakeoff === "number") {
-    const idx = findNearestSampleIndex(lowerBodySamples, confirmedTakeoff);
-    const curr = typeof idx === "number" ? lowerBodySamples[idx] : undefined;
-    const next = typeof idx === "number" ? lowerBodySamples[idx + 1] : undefined;
-    const centroidMovingUp =
-      curr?.valid &&
-      next?.valid &&
-      typeof curr.centroidY === "number" &&
-      typeof next.centroidY === "number" &&
-      next.centroidY < curr.centroidY - 1;
-    const bottomDropped = curr?.bottomBandEnergy !== undefined && curr.bottomBandEnergy < bottomMedian;
-    if (!centroidMovingUp || !bottomDropped) {
-      confirmationNotes.push("Takeoff rejected by lower-body confirmation.");
-      confirmedTakeoff = undefined;
-    }
-  }
-
-  const footAreaMedian = median(footSamples.filter((s) => s.valid).map((s) => s.footArea));
-  const footDensityMedian = median(footSamples.map((s) => s.groundBandDensity));
-
-  if (typeof confirmedTakeoff === "number" && footSamples.length) {
-    const footIdx = findNearestSampleIndex(footSamples, confirmedTakeoff);
-    const footSample = typeof footIdx === "number" ? footSamples[footIdx] : undefined;
-    if (footSample?.valid) {
-      const areaDrop = footAreaMedian > 0 && footSample.footArea < footAreaMedian * 0.5;
-      const densityDrop = footSample.groundBandDensity < footDensityMedian * 0.6;
-      if (!areaDrop && !densityDrop) {
-        confirmationNotes.push("Takeoff rejected by foot-region confirmation.");
-        confirmedTakeoff = undefined;
-      }
-    }
-  }
-
-  let confirmedLanding = contactEvents.landingMs;
-  if (typeof confirmedLanding === "number") {
-    const idx = findNearestSampleIndex(lowerBodySamples, confirmedLanding);
-    const curr = typeof idx === "number" ? lowerBodySamples[idx] : undefined;
-    const areaSpike = areaMedian > 0 && (curr?.area ?? 0) > areaMedian * 1.5;
-    const bottomSpike = curr?.bottomBandEnergy !== undefined && curr.bottomBandEnergy > bottomMedian;
-    if (!bottomSpike && !areaSpike) {
-      confirmationNotes.push("Landing rejected by lower-body confirmation.");
-      confirmedLanding = undefined;
-    }
-  }
-
-  if (typeof confirmedLanding === "number" && footSamples.length) {
-    const footIdx = findNearestSampleIndex(footSamples, confirmedLanding);
-    const footSample = typeof footIdx === "number" ? footSamples[footIdx] : undefined;
-    const prevSample = typeof footIdx === "number" ? footSamples[footIdx - 1] : undefined;
-    if (footSample?.valid) {
-      const areaSpike = footAreaMedian > 0 && footSample.footArea > footAreaMedian * 1.5;
-      const densitySpike = footSample.groundBandDensity > footDensityMedian * 1.4;
-      const strikeShift =
-        typeof footSample.strikeBias === "number" &&
-        typeof prevSample?.strikeBias === "number" &&
-        Math.abs(footSample.strikeBias - prevSample.strikeBias) > 0.3;
-      if (!areaSpike && !densitySpike && !strikeShift) {
-        confirmationNotes.push("Landing rejected by foot-region confirmation.");
-        confirmedLanding = undefined;
-      }
-    }
-  }
-
-  const takeoffIndex = findNearestFrameIndex(analyzedFrames, confirmedTakeoff);
-  const landingIndex = findNearestFrameIndex(analyzedFrames, confirmedLanding);
+  const takeoffIndex = findNearestFrameIndex(analyzedFrames, contactEvents.takeoffMs);
+  const landingIndex = findNearestFrameIndex(analyzedFrames, contactEvents.landingMs);
   const metrics = deriveMetrics(analyzedFrames, takeoffIndex ?? -1, landingIndex ?? -1);
 
   const trackedRatio =
@@ -741,19 +538,15 @@ export async function analyzePogoSideView(
   const viewOk = groundSummary.type !== "unknown";
   const jointsTracked = trackedRatio >= 0.6;
   const contactDetected =
-    typeof confirmedTakeoff === "number" && typeof confirmedLanding === "number";
+    typeof contactEvents.takeoffMs === "number" && typeof contactEvents.landingMs === "number";
 
-  let baseConfidence = clamp01(
+  const baseConfidence = clamp01(
     0.2 +
       (viewOk ? 0.3 : 0) +
       (jointsTracked ? 0.25 : 0) +
       (contactDetected ? 0.25 : 0) +
       (groundSummary.confidence > 0.4 ? 0.1 : 0)
   );
-  if (footSamples.length) {
-    const footFactor = footValidRatio >= 0.7 ? 1 : footValidRatio >= 0.4 ? 0.85 : 0.7;
-    baseConfidence = clamp01(baseConfidence * footFactor);
-  }
   const overallConfidence =
     measurementStatus === "real" ? baseConfidence : Math.min(baseConfidence, 0.35);
 
@@ -761,13 +554,12 @@ export async function analyzePogoSideView(
     `Analyzer: ${
       measurementStatus === "real" ? batch?.debug?.provider ?? "web-canvas" : "synthetic"
     }.`,
-    `Capture FPS: ${metadata.nominalFps.toFixed(1)}.`,
     `Frames: ${analyzedFrames.length}.`,
     `FPS (target): ${TARGET_FPS}.`,
     `Ground Y: ${groundLine.y}px (${groundLine.method}).`,
     `Contact frames: ${contactSignals.filter((signal) => signal.inContact).length}.`,
     contactDetected
-      ? `Takeoff @ ${confirmedTakeoff}ms, landing @ ${confirmedLanding}ms.`
+      ? `Takeoff @ ${contactEvents.takeoffMs}ms, landing @ ${contactEvents.landingMs}ms.`
       : "No contact transitions detected.",
     metrics.gctSeconds !== null ? `GCT: ${metrics.gctSeconds.toFixed(3)}s.` : "GCT unavailable.",
     metrics.flightSeconds !== null ? `Flight: ${metrics.flightSeconds.toFixed(3)}s.` : "Flight unavailable.",
@@ -777,48 +569,24 @@ export async function analyzePogoSideView(
     ...(batch?.error?.message ? [`Frame extraction error: ${batch.error.message}`] : []),
     ...debug.notes,
     ...contactEvents.debugNotes,
-    ...confirmationNotes,
-    ...footNotes,
     `ContactScore min/mean/max: ${stats.contactScoreMin.toFixed(2)} / ${stats.contactScoreMean.toFixed(
       2
     )} / ${stats.contactScoreMax.toFixed(2)}.`,
   ];
 
-  const takeoffTime = confirmedTakeoff;
-  const landingTime = confirmedLanding;
-  const footTakeoffSampleIndex = findNearestSampleIndex(footSamples, confirmedTakeoff);
-  const footLandingSampleIndex = findNearestSampleIndex(footSamples, confirmedLanding);
-  const footTakeoffSample =
-    typeof footTakeoffSampleIndex === "number" ? footSamples[footTakeoffSampleIndex] : undefined;
-  const footLandingSample =
-    typeof footLandingSampleIndex === "number" ? footSamples[footLandingSampleIndex] : undefined;
-  const footAngleTakeoff =
-    footTakeoffSample?.valid && typeof footTakeoffSample.footAngleDeg === "number"
-      ? footTakeoffSample.footAngleDeg
-      : null;
-  const footAngleLanding =
-    footLandingSample?.valid && typeof footLandingSample.footAngleDeg === "number"
-      ? footLandingSample.footAngleDeg
-      : null;
+  const takeoffTime = contactEvents.takeoffMs;
+  const landingTime = contactEvents.landingMs;
 
   return {
     ...EMPTY_ANALYSIS,
     status: "complete",
     measurementStatus,
-    capture: {
-      nominalFps: metadata.nominalFps,
-      durationMs: metadata.durationMs,
-    },
     metrics: {
       ...EMPTY_ANALYSIS.metrics,
       gctSeconds: metrics.gctSeconds,
       gctMs: metrics.gctMs,
       flightSeconds: metrics.flightSeconds,
-      footAngleDeg: {
-        takeoff: footAngleTakeoff,
-        landing: footAngleLanding,
-        confidence: footSamples.length ? clamp01(footValidRatio) : 0,
-      },
+      footAngleDeg: { takeoff: null, landing: null, confidence: 0 },
     },
     events: {
       takeoff: {
@@ -852,16 +620,7 @@ export async function analyzePogoSideView(
         measurementStatus === "real" ? "measurement-real" : "synthetic-placeholder",
         debug.notes.length ? "GROUND_ASSUMED" : "GROUND_MANUAL",
         "ROI_LOCKED",
-        ...(contactEvents.debugNotes.length || confirmationNotes.length
-          ? ["CONTACT_TRANSITION_AMBIGUOUS"]
-          : []),
-        ...(footSamples.length && footValidRatio >= 0.7 ? ["FOOT_REGION_OK"] : ["FOOT_REGION_UNSTABLE"]),
-        ...(() => {
-          const strikeValid =
-            footSamples.filter((sample) => typeof sample.strikeBias === "number").length /
-            Math.max(1, footSamples.length);
-          return footSamples.length && strikeValid < 0.5 ? ["STRIKE_BIAS_LOW_CONF"] : [];
-        })(),
+        ...(contactEvents.debugNotes.length ? ["CONTACT_TRANSITION_AMBIGUOUS"] : []),
       ],
     },
     analysisDebug: {
@@ -876,47 +635,6 @@ export async function analyzePogoSideView(
           bottomBandEnergyMean: stats.bottomMean,
         },
       },
-      lowerBody: {
-        ...lowerBodyResult.debug,
-        notes: [...lowerBodyResult.debug.notes, ...confirmationNotes],
-      },
-      foot: {
-        ...footResult.debug,
-        notes: [...footResult.debug.notes, ...footNotes],
-        eventSignals: (() => {
-          const takeoffIdx = findNearestSampleIndex(rawSamples, confirmedTakeoff);
-          const landingIdx = findNearestSampleIndex(rawSamples, confirmedLanding);
-          const takeoffRaw = typeof takeoffIdx === "number" ? rawSamples[takeoffIdx] : undefined;
-          const landingRaw = typeof landingIdx === "number" ? rawSamples[landingIdx] : undefined;
-          const takeoffLowerIdx = findNearestSampleIndex(lowerBodySamples, confirmedTakeoff);
-          const landingLowerIdx = findNearestSampleIndex(lowerBodySamples, confirmedLanding);
-          const takeoffLower =
-            typeof takeoffLowerIdx === "number" ? lowerBodySamples[takeoffLowerIdx] : undefined;
-          const landingLower =
-            typeof landingLowerIdx === "number" ? lowerBodySamples[landingLowerIdx] : undefined;
-
-          return {
-            takeoff:
-              typeof confirmedTakeoff === "number"
-                ? {
-                    tMs: confirmedTakeoff,
-                    contactScore: takeoffRaw?.contactScore,
-                    bottomBandEnergy: takeoffLower?.bottomBandEnergy,
-                    groundBandDensity: footTakeoffSample?.groundBandDensity,
-                  }
-                : undefined,
-            landing:
-              typeof confirmedLanding === "number"
-                ? {
-                    tMs: confirmedLanding,
-                    contactScore: landingRaw?.contactScore,
-                    bottomBandEnergy: landingLower?.bottomBandEnergy,
-                    groundBandDensity: footLandingSample?.groundBandDensity,
-                  }
-                : undefined,
-          };
-        })(),
-      },
     },
   };
 }
@@ -930,40 +648,6 @@ export function runPogoAnalyzerSelfTest(): JumpAnalysis {
     groundLine.y,
     roi
   );
-  const lowerBodyResult = {
-    samples: [],
-    debug: {
-      notes: ["Lower-body tracker skipped (synthetic self-test)."],
-      thresholds: { motionThresh: 0, minArea: 0 },
-      stats: {
-        validFrames: 0,
-        areaMin: 0,
-        areaMax: 0,
-        centroidYMin: 0,
-        centroidYMax: 0,
-        bottomBandEnergyMin: 0,
-        bottomBandEnergyMax: 0,
-      },
-    },
-  };
-  const footResult = {
-    samples: [],
-    debug: {
-      notes: ["Foot region extractor skipped (synthetic self-test)."],
-      thresholds: { motionThresh: 0, minFootArea: 0, groundBandPx: 0 },
-      stats: {
-        validFrames: 0,
-        areaMin: 0,
-        areaMax: 0,
-        angleMin: 0,
-        angleMax: 0,
-        strikeBiasMin: 0,
-        strikeBiasMax: 0,
-        groundBandDensityMin: 0,
-        groundBandDensityMax: 0,
-      },
-    },
-  };
 
   const groundSummary: GroundModel2D =
     Number.isFinite(groundLine.y)
@@ -999,16 +683,8 @@ export function runPogoAnalyzerSelfTest(): JumpAnalysis {
       footAngleDeg: { takeoff: null, landing: null, confidence: 0 },
     },
     events: {
-      takeoff: {
-        t: null,
-        frame: typeof takeoffIndex === "number" ? takeoffIndex : null,
-        confidence: 0.4,
-      },
-      landing: {
-        t: null,
-        frame: typeof landingIndex === "number" ? landingIndex : null,
-        confidence: 0.4,
-      },
+      takeoff: { t: null, frame: takeoffIndex >= 0 ? takeoffIndex : null, confidence: 0.4 },
+      landing: { t: null, frame: landingIndex >= 0 ? landingIndex : null, confidence: 0.4 },
     },
     frames: analyzedFrames,
     groundSummary,
@@ -1045,14 +721,6 @@ export function runPogoAnalyzerSelfTest(): JumpAnalysis {
           motionEnergyMean: stats.motionMean,
           bottomBandEnergyMean: stats.bottomMean,
         },
-      },
-      lowerBody: {
-        ...lowerBodyResult.debug,
-        notes: [...lowerBodyResult.debug.notes, ...contactEvents.debugNotes],
-      },
-      foot: {
-        ...footResult.debug,
-        notes: [...footResult.debug.notes, ...contactEvents.debugNotes],
       },
     },
   };

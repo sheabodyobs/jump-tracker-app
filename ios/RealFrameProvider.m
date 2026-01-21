@@ -8,8 +8,4 @@ RCT_EXTERN_METHOD(sampleFrames:(NSString *)videoUri
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
-RCT_EXTERN_METHOD(getVideoMetadata:(NSString *)videoUri
-                  resolver:(RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject)
-
 @end

@@ -8,13 +8,6 @@ type NativeFrameProvider = {
     timestampsMs: number[],
     options?: { maxWidth?: number; format?: "rgba" | "luma" }
   ): Promise<ExtractedFrameBatch>;
-  getVideoMetadata(videoUri: string): Promise<{
-    measurementStatus: "real" | "synthetic_placeholder";
-    durationMs?: number;
-    nominalFps?: number;
-    debug?: { provider: "ios_avfoundation"; notes: string[] };
-    error?: { code: string; message: string };
-  }>;
 };
 
 const NativeRealFrameProvider: NativeFrameProvider | null =
@@ -72,56 +65,3 @@ export const iosAvFoundationFrameProvider: FrameProvider = {
     }
   },
 };
-
-export async function getIosVideoMetadata(videoUri: string): Promise<{
-  measurementStatus: "real" | "synthetic_placeholder";
-  durationMs?: number;
-  nominalFps?: number;
-  debug?: { provider: "ios_avfoundation"; notes: string[] };
-  error?: { code: string; message: string };
-}> {
-  if (Platform.OS !== "ios") {
-    return {
-      measurementStatus: "synthetic_placeholder",
-      debug: {
-        provider: "ios_avfoundation",
-        notes: ["iOS-only metadata is unavailable on this platform."],
-      },
-      error: {
-        code: "PLATFORM_UNSUPPORTED",
-        message: "Metadata is only supported on iOS.",
-      },
-    };
-  }
-
-  if (!NativeRealFrameProvider?.getVideoMetadata) {
-    return {
-      measurementStatus: "synthetic_placeholder",
-      debug: {
-        provider: "ios_avfoundation",
-        notes: ["Native metadata module not available."],
-      },
-      error: {
-        code: "NATIVE_MODULE_UNAVAILABLE",
-        message: "RealFrameProvider native module not available.",
-      },
-    };
-  }
-
-  try {
-    return await NativeRealFrameProvider.getVideoMetadata(videoUri);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown metadata error.";
-    return {
-      measurementStatus: "synthetic_placeholder",
-      debug: {
-        provider: "ios_avfoundation",
-        notes: ["Native metadata fetch failed."],
-      },
-      error: {
-        code: "NATIVE_MODULE_FAILURE",
-        message,
-      },
-    };
-  }
-}

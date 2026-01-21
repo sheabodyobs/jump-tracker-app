@@ -27,59 +27,6 @@ class RealFrameProvider: NSObject {
     }
   }
 
-  @objc(getVideoMetadata:resolver:rejecter:)
-  func getVideoMetadata(
-    _ videoUri: String,
-    resolver resolve: @escaping RCTPromiseResolveBlock,
-    rejecter reject: @escaping RCTPromiseRejectBlock
-  ) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let result = self.videoMetadataInternal(videoUri)
-      DispatchQueue.main.async {
-        resolve(result)
-      }
-    }
-  }
-
-  private func videoMetadataInternal(_ videoUri: String) -> [String: Any] {
-    if videoUri.hasPrefix("ph://") {
-      return [
-        "measurementStatus": "synthetic_placeholder",
-        "debug": ["provider": "ios_avfoundation", "notes": ["ph:// URIs are not supported yet."]],
-        "error": ["code": "PH_URI_UNSUPPORTED", "message": "ph:// URIs are not supported yet."]
-      ]
-    }
-
-    guard let url = URL(string: videoUri) else {
-      return [
-        "measurementStatus": "synthetic_placeholder",
-        "debug": ["provider": "ios_avfoundation", "notes": ["Invalid video URI."]],
-        "error": ["code": "INVALID_URI", "message": "Invalid video URI."]
-      ]
-    }
-
-    let asset = AVURLAsset(url: url)
-    let durationSeconds = CMTimeGetSeconds(asset.duration)
-    let durationMs = durationSeconds.isFinite ? Int(durationSeconds * 1000) : 0
-    let nominalFps = asset.tracks(withMediaType: .video).first?.nominalFrameRate ?? 0
-
-    if nominalFps <= 0 {
-      return [
-        "measurementStatus": "synthetic_placeholder",
-        "durationMs": durationMs > 0 ? durationMs : nil as Any,
-        "debug": ["provider": "ios_avfoundation", "notes": ["FPS unavailable."]],
-        "error": ["code": "FPS_UNAVAILABLE", "message": "Could not determine FPS."]
-      ]
-    }
-
-    return [
-      "measurementStatus": "real",
-      "durationMs": durationMs > 0 ? durationMs : nil as Any,
-      "nominalFps": nominalFps,
-      "debug": ["provider": "ios_avfoundation", "notes": []]
-    ]
-  }
-
   private func sampleFramesInternal(
     _ videoUri: String,
     timestampsMs: [NSNumber],

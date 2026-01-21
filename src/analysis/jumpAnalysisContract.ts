@@ -155,67 +155,12 @@ export type JumpAnalysis = {
 
   aiSummary: { text: string; tags: string[] };
 
-  capture?: {
-    nominalFps?: number;
-    durationMs?: number;
-  };
-
   analysisDebug?: {
     groundRoi?: {
       notes: string[];
       groundLine?: { y: number; method: "manual" | "auto_edge" | "auto_motion" };
       roi?: { x: number; y: number; w: number; h: number };
       scores?: Record<string, number>;
-    };
-    lowerBody?: {
-      notes: string[];
-      thresholds: {
-        motionThresh: number;
-        minArea: number;
-      };
-      stats: {
-        validFrames: number;
-        areaMin: number;
-        areaMax: number;
-        centroidYMin: number;
-        centroidYMax: number;
-        bottomBandEnergyMin: number;
-        bottomBandEnergyMax: number;
-      };
-    };
-    foot?: {
-      notes: string[];
-      thresholds: {
-        motionThresh: number;
-        darkThresh?: number;
-        minFootArea: number;
-        groundBandPx: number;
-      };
-      stats: {
-        validFrames: number;
-        areaMin: number;
-        areaMax: number;
-        angleMin: number;
-        angleMax: number;
-        strikeBiasMin: number;
-        strikeBiasMax: number;
-        groundBandDensityMin: number;
-        groundBandDensityMax: number;
-      };
-      eventSignals?: {
-        takeoff?: {
-          tMs: number;
-          contactScore?: number;
-          bottomBandEnergy?: number;
-          groundBandDensity?: number;
-        };
-        landing?: {
-          tMs: number;
-          contactScore?: number;
-          bottomBandEnergy?: number;
-          groundBandDensity?: number;
-        };
-      };
     };
   };
 
