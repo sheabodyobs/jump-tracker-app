@@ -1,7 +1,7 @@
 // app/(tabs)/index.tsx
 import * as ImagePicker from "expo-image-picker";
 import React, { useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import {
   EMPTY_ANALYSIS,
@@ -10,6 +10,7 @@ import {
 
 import { analyzeVideo } from "../../src/analysis/analyzeVideo";
 import { MOCK_ANALYSIS } from "../../src/analysis/mockAnalysis";
+import { analyzePogoSideView } from "../../src/analysis/pogoSideViewAnalyzer";
 import { selfTestExtractFrames } from "../../src/video/selfTestExtractFrames";
 
 /**
@@ -87,6 +88,9 @@ export default function HomeScreen() {
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [frameTestReport, setFrameTestReport] = useState<string>("");
+  const [groundYInput, setGroundYInput] = useState<string>("");
+  const [roiPreset, setRoiPreset] = useState<"small" | "medium" | "large">("medium");
+  const [showOverlay, setShowOverlay] = useState(false);
 
   async function pickVideo() {
     try {
@@ -139,18 +143,39 @@ export default function HomeScreen() {
     setFrameTestReport("Running frame extraction test...");
 
     try {
-      const result = await selfTestExtractFrames(videoUri);
-      const frames = result.frames ?? [];
+      const frameBatch = await selfTestExtractFrames(videoUri);
+      const frames = frameBatch.frames ?? [];
       const first = frames[0];
       const last = frames[frames.length - 1];
+      const groundYValue = Number.parseFloat(groundYInput);
+      const roiPresets = {
+        small: { roiWidthPx: 64, roiHeightPx: 48, roiPaddingPx: 6 },
+        medium: {},
+        large: { roiWidthPx: 120, roiHeightPx: 90, roiPaddingPx: 6 },
+      } as const;
+      const analysisResult = await analyzePogoSideView(videoUri, {
+        ...(Number.isFinite(groundYValue) ? { groundY: groundYValue } : {}),
+        ...roiPresets[roiPreset],
+      });
+      const debug = analysisResult.analysisDebug?.groundRoi;
+      const scores = debug?.scores ?? {};
       const lines = [
-        `Provider: ${result.debug?.provider ?? "unknown"}`,
-        `Measurement: ${result.measurementStatus}`,
+        `Provider: ${frameBatch.debug?.provider ?? "unknown"}`,
+        `Measurement: ${frameBatch.measurementStatus}`,
         `Frames: ${frames.length}`,
         `First tMs: ${first?.tMs ?? "—"}`,
         `Last tMs: ${last?.tMs ?? "—"}`,
         `Size: ${first?.width ?? "—"}x${first?.height ?? "—"}`,
-        result.error ? `Error: ${result.error.code} ${result.error.message}` : "Error: none",
+        debug?.groundLine ? `GroundY: ${debug.groundLine.y}px` : "GroundY: —",
+        debug?.roi
+          ? `ROI: x${debug.roi.x}, y${debug.roi.y}, w${debug.roi.w}, h${debug.roi.h}`
+          : "ROI: —",
+        `ContactScore min/mean/max: ${scores.contactScoreMin?.toFixed?.(2) ?? "—"} / ${
+          scores.contactScoreMean?.toFixed?.(2) ?? "—"
+        } / ${scores.contactScoreMax?.toFixed?.(2) ?? "—"}`,
+        `Takeoff: ${analysisResult.events.takeoff.t ?? "—"}s`,
+        `Landing: ${analysisResult.events.landing.t ?? "—"}s`,
+        frameBatch.error ? `Error: ${frameBatch.error.code} ${frameBatch.error.message}` : "Error: none",
       ];
       setFrameTestReport(lines.join("\n"));
     } catch {
@@ -380,6 +405,43 @@ export default function HomeScreen() {
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Frame extraction self-test</Text>
+        <Text style={styles.row}>Ground Y (px)</Text>
+        <TextInput
+          style={styles.input}
+          value={groundYInput}
+          onChangeText={setGroundYInput}
+          placeholder="Auto (leave blank)"
+          keyboardType="numeric"
+        />
+        <Text style={styles.row}>ROI preset</Text>
+        <View style={styles.actions}>
+          {(["small", "medium", "large"] as const).map((preset) => (
+            <Pressable
+              key={preset}
+              style={[
+                styles.button,
+                styles.buttonSecondary,
+                roiPreset === preset && styles.buttonActive,
+              ]}
+              onPress={() => setRoiPreset(preset)}
+            >
+              <Text style={styles.buttonText}>{preset}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Pressable
+          style={[styles.button, styles.buttonSecondary]}
+          onPress={() => setShowOverlay((prev) => !prev)}
+        >
+          <Text style={styles.buttonText}>
+            {showOverlay ? "Hide debug overlay" : "Show debug overlay"}
+          </Text>
+        </Pressable>
+        {showOverlay && (
+          <Text style={styles.muted}>
+            Overlay preview is unavailable without react-native-svg. Numeric values shown below.
+          </Text>
+        )}
         <Text style={styles.muted}>{frameTestReport || "—"}</Text>
       </View>
     </View>
@@ -399,6 +461,7 @@ const styles = StyleSheet.create({
   },
   buttonSecondary: { opacity: 0.7 },
   buttonDisabled: { opacity: 0.4 },
+  buttonActive: { opacity: 1, borderColor: "#2563eb" },
   buttonText: { fontSize: 14, fontWeight: "600" },
 
   card: {
@@ -412,4 +475,11 @@ const styles = StyleSheet.create({
   value: { fontSize: 14, fontWeight: "600" },
   muted: { fontSize: 12, opacity: 0.7 },
   warning: { fontSize: 12, fontWeight: "600", color: "#b45309" },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+  },
 });

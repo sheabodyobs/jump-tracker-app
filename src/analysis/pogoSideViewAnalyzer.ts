@@ -2,12 +2,14 @@
 import { Platform } from "react-native";
 
 import { type JumpAnalysis, EMPTY_ANALYSIS, type AnalysisFrame, type GroundModel2D } from "./jumpAnalysisContract";
-import type { ExtractedFrameBatch, MeasurementStatus } from "../video/FrameProvider";
+import type { ExtractedFrame, ExtractedFrameBatch, MeasurementStatus } from "../video/FrameProvider";
 import { iosAvFoundationFrameProvider } from "../video/iosAvFoundationFrameProvider";
+import { computeGroundAndRoi, detectContactEventsFromSignal, type GroundRoiConfig } from "./groundRoi";
 
 const TARGET_FPS = 30;
 const MAX_FRAMES = 36;
 const DEFAULT_SAMPLE_WINDOW_MS = 2000;
+const CONTACT_FRAME_THRESHOLD = 0.55;
 
 type PixelFrame = {
   width: number;
@@ -18,15 +20,6 @@ type PixelFrame = {
 
 type ContactSignal = {
   inContact: boolean;
-  confidence: number;
-  heel: number;
-  toe: number;
-  footX: number | null;
-  footY: number | null;
-};
-
-type GroundSignal = {
-  groundY: number | null;
   confidence: number;
 };
 
@@ -40,14 +33,6 @@ function clamp01(value: number): number {
 function mean(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((sum, v) => sum + v, 0) / values.length;
-}
-
-function median(values: number[]): number {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) return (sorted[mid - 1] + sorted[mid]) / 2;
-  return sorted[mid];
 }
 
 function extractFramesWeb(uri: string): Promise<PixelFrame[]> {
@@ -284,91 +269,156 @@ async function sampleFramesForAnalysis(uri: string): Promise<{
   };
 }
 
-function analyzeGround(frame: PixelFrame): GroundSignal {
-  const { width, height, data } = frame;
-  const rowAverages: number[] = new Array(height).fill(0);
+function toExtractedFrames(frames: PixelFrame[]): ExtractedFrame[] {
+  return frames.map((frame) => ({
+    tMs: frame.tMs,
+    width: frame.width,
+    height: frame.height,
+    format: "rgba",
+    dataBase64: "",
+  }));
+}
 
-  for (let y = 0; y < height; y += 1) {
-    let sum = 0;
-    for (let x = 0; x < width; x += 1) {
-      const idx = (y * width + x) * 4;
-      const r = data[idx];
-      const g = data[idx + 1];
-      const b = data[idx + 2];
-      const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-      sum += luminance;
+function lumaAt(data: Uint8ClampedArray, idx: number) {
+  const r = data[idx];
+  const g = data[idx + 1];
+  const b = data[idx + 2];
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+function extractRoiLuma(frame: PixelFrame, roi: { x: number; y: number; w: number; h: number }) {
+  const luma = new Float32Array(roi.w * roi.h);
+  let ptr = 0;
+  for (let y = 0; y < roi.h; y += 1) {
+    const row = roi.y + y;
+    for (let x = 0; x < roi.w; x += 1) {
+      const col = roi.x + x;
+      const idx = (row * frame.width + col) * 4;
+      luma[ptr] = lumaAt(frame.data, idx);
+      ptr += 1;
     }
-    rowAverages[y] = sum / width;
   }
+  return luma;
+}
 
-  const searchStart = Math.floor(height * 0.5);
-  let bestRow = height - 1;
-  let bestGradient = 0;
-
-  for (let y = searchStart + 1; y < height; y += 1) {
-    const gradient = Math.abs(rowAverages[y] - rowAverages[y - 1]);
-    if (gradient > bestGradient) {
-      bestGradient = gradient;
-      bestRow = y;
+function computeEdgeEnergy(luma: Float32Array, roiW: number, roiH: number) {
+  let sum = 0;
+  let count = 0;
+  for (let y = 1; y < roiH; y += 1) {
+    const rowIdx = y * roiW;
+    const prevRowIdx = (y - 1) * roiW;
+    for (let x = 0; x < roiW; x += 1) {
+      sum += Math.abs(luma[rowIdx + x] - luma[prevRowIdx + x]);
+      count += 1;
     }
   }
+  return count ? sum / count : 0;
+}
 
-  const confidence = clamp01(bestGradient / 80);
+function computeBottomBandEnergy(luma: Float32Array, roiW: number, roiH: number) {
+  const bandH = Math.max(1, Math.round(roiH * 0.15));
+  const startRow = roiH - bandH;
+  let sum = 0;
+  let count = 0;
+  for (let y = startRow; y < roiH; y += 1) {
+    const rowIdx = y * roiW;
+    const prevRowIdx = Math.max(0, y - 1) * roiW;
+    for (let x = 0; x < roiW; x += 1) {
+      sum += Math.abs(luma[rowIdx + x] - luma[prevRowIdx + x]);
+      count += 1;
+    }
+  }
+  return count ? sum / count : 0;
+}
+
+type ContactSample = {
+  tMs: number;
+  contactScore: number;
+  edgeEnergy: number;
+  motionEnergy: number;
+  bottomBandEnergy: number;
+};
+
+function analyzeContactFromRoi(pixelFrames: PixelFrame[], groundLineY: number, roi: { x: number; y: number; w: number; h: number }) {
+  const analyzedFrames: AnalysisFrame[] = [];
+  const contactSignals: ContactSignal[] = [];
+  let prevLuma: Float32Array | null = null;
+  const rawSamples: ContactSample[] = [];
+
+  pixelFrames.forEach((frame) => {
+    const luma = extractRoiLuma(frame, roi);
+    const edgeEnergy = computeEdgeEnergy(luma, roi.w, roi.h);
+    const bottomBandEnergy = computeBottomBandEnergy(luma, roi.w, roi.h);
+    const motionEnergy = prevLuma
+      ? luma.reduce((sum, value, idx) => sum + Math.abs(value - prevLuma![idx]), 0) /
+        Math.max(1, luma.length)
+      : 0;
+
+    rawSamples.push({
+      tMs: frame.tMs,
+      contactScore: 0,
+      edgeEnergy,
+      motionEnergy,
+      bottomBandEnergy,
+    });
+    prevLuma = luma;
+  });
+
+  const edgeValues = rawSamples.map((s) => s.edgeEnergy);
+  const motionValues = rawSamples.map((s) => s.motionEnergy);
+  const bottomValues = rawSamples.map((s) => s.bottomBandEnergy);
+  const edgeMin = edgeValues.length ? Math.min(...edgeValues) : 0;
+  const edgeMax = edgeValues.length ? Math.max(...edgeValues) : 0;
+  const motionMin = motionValues.length ? Math.min(...motionValues) : 0;
+  const motionMax = motionValues.length ? Math.max(...motionValues) : 0;
+
+  rawSamples.forEach((sample) => {
+    const edgeNorm = normalize(sample.edgeEnergy, edgeMin, edgeMax);
+    const motionNorm = normalize(sample.motionEnergy, motionMin, motionMax);
+    sample.contactScore = clamp01(edgeNorm * (1 - motionNorm));
+  });
+
+  rawSamples.forEach((sample, idx) => {
+    const contact = {
+      inContact: sample.contactScore >= CONTACT_FRAME_THRESHOLD,
+      confidence: clamp01(sample.contactScore),
+    };
+    contactSignals.push(contact);
+    analyzedFrames.push(makeFrame(pixelFrames[idx], groundLineY, contact));
+  });
+
+  const contactScores = rawSamples.map((s) => s.contactScore);
+  const contactScoreMin = contactScores.length ? Math.min(...contactScores) : 0;
+  const contactScoreMax = contactScores.length ? Math.max(...contactScores) : 0;
+  const contactScoreMean = mean(contactScores);
+  const edgeMean = mean(edgeValues);
+  const motionMean = mean(motionValues);
+  const bottomMean = mean(bottomValues);
 
   return {
-    groundY: Number.isFinite(bestRow) ? bestRow : null,
-    confidence,
+    analyzedFrames,
+    contactSignals,
+    rawSamples,
+    stats: {
+      contactScoreMin,
+      contactScoreMax,
+      contactScoreMean,
+      edgeMean,
+      motionMean,
+      bottomMean,
+    },
   };
 }
 
-function analyzeContact(frame: PixelFrame, ground: GroundSignal): ContactSignal {
-  const { width, height, data } = frame;
-  if (ground.groundY === null) {
-    return { inContact: false, confidence: 0, heel: 0, toe: 0, footX: null, footY: null };
-  }
-
-  const bandHeight = Math.max(2, Math.floor(height * 0.08));
-  const startY = Math.max(0, ground.groundY - bandHeight);
-  const endY = Math.min(height - 1, ground.groundY);
-  let darkCount = 0;
-  let totalCount = 0;
-  let sumX = 0;
-  let sumY = 0;
-
-  for (let y = startY; y <= endY; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const idx = (y * width + x) * 4;
-      const r = data[idx];
-      const g = data[idx + 1];
-      const b = data[idx + 2];
-      const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-      totalCount += 1;
-      if (luminance < 80) {
-        darkCount += 1;
-        sumX += x;
-        sumY += y;
-      }
-    }
-  }
-
-  const ratio = totalCount ? darkCount / totalCount : 0;
-  const confidence = clamp01((ratio - 0.04) / 0.2);
-  const footX = darkCount ? sumX / darkCount : null;
-  const footY = darkCount ? sumY / darkCount : null;
-
-  return {
-    inContact: ratio > 0.08,
-    confidence,
-    heel: confidence,
-    toe: confidence,
-    footX,
-    footY,
-  };
+function normalize(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return 0;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max - min < 1e-6) return 0.5;
+  return clamp01((value - min) / (max - min));
 }
 
 function makeFrame(
   frame: PixelFrame,
-  ground: GroundSignal,
+  groundY: number,
   contact: ContactSignal
 ): AnalysisFrame {
   const emptyPoint = { x: null, y: null, confidence: 0 };
@@ -380,42 +430,19 @@ function makeFrame(
     toe: emptyPoint,
   };
 
-  const footOffset = frame.width * 0.02;
-  const footX = contact.footX;
-  const footY = contact.footY;
-
-  const heel =
-    footX !== null && footY !== null
-      ? { x: footX - footOffset, y: footY, confidence: contact.confidence }
-      : emptyPoint;
-  const toe =
-    footX !== null && footY !== null
-      ? { x: footX + footOffset, y: footY, confidence: contact.confidence }
-      : emptyPoint;
-  const ankle =
-    footX !== null && footY !== null
-      ? { x: footX, y: Math.max(0, footY - frame.height * 0.06), confidence: contact.confidence }
-      : emptyPoint;
-
   const joints = {
     left: {
       ...emptyLeg,
-      heel,
-      toe,
-      ankle,
     },
     right: {
       ...emptyLeg,
-      heel,
-      toe,
-      ankle,
     },
   };
 
   const groundModel: GroundModel2D =
-    ground.groundY === null
-      ? { type: "unknown", confidence: 0 }
-      : { type: "y_scalar", y: ground.groundY, confidence: ground.confidence };
+    Number.isFinite(groundY)
+      ? { type: "y_scalar", y: groundY, confidence: 0.4 }
+      : { type: "unknown", confidence: 0 };
 
   return {
     frameIndex: Math.round(frame.tMs / (1000 / TARGET_FPS)),
@@ -424,40 +451,18 @@ function makeFrame(
     ground: groundModel,
     contact: {
       left: {
-        heel: contact.heel,
-        toe: contact.toe,
         inContact: contact.inContact,
+        heel: contact.confidence,
+        toe: contact.confidence,
       },
       right: {
-        heel: contact.heel,
-        toe: contact.toe,
         inContact: contact.inContact,
+        heel: contact.confidence,
+        toe: contact.confidence,
       },
     },
     confidence: contact.confidence,
   };
-}
-
-function deriveEvents(frames: AnalysisFrame[]) {
-  const contacts = frames.map((frame) => frame.contact.left.inContact || frame.contact.right.inContact);
-  let takeoffIndex = -1;
-  let landingIndex = -1;
-
-  for (let i = 1; i < contacts.length; i += 1) {
-    if (contacts[i - 1] && !contacts[i] && takeoffIndex === -1) {
-      takeoffIndex = i;
-      continue;
-    }
-    if (takeoffIndex !== -1 && !contacts[i - 1] && contacts[i]) {
-      landingIndex = i;
-      break;
-    }
-  }
-
-  const takeoffFrame = takeoffIndex >= 0 ? frames[takeoffIndex] : null;
-  const landingFrame = landingIndex >= 0 ? frames[landingIndex] : null;
-
-  return { takeoffIndex, landingIndex, takeoffFrame, landingFrame };
 }
 
 function deriveMetrics(frames: AnalysisFrame[], takeoffIndex: number, landingIndex: number) {
@@ -484,44 +489,56 @@ function deriveMetrics(frames: AnalysisFrame[], takeoffIndex: number, landingInd
   };
 }
 
-export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
-  const { pixelFrames, batch, measurementStatus } = await sampleFramesForAnalysis(uri);
-
-  const analyzedFrames: AnalysisFrame[] = [];
-  const groundConfidences: number[] = [];
-  const groundYs: number[] = [];
-  const contactSignals: ContactSignal[] = [];
-
-  pixelFrames.forEach((frame) => {
-    const ground = analyzeGround(frame);
-    const contact = analyzeContact(frame, ground);
-    analyzedFrames.push(makeFrame(frame, ground, contact));
-    contactSignals.push(contact);
-
-    if (ground.groundY !== null && ground.confidence > 0) {
-      groundYs.push(ground.groundY);
-      groundConfidences.push(ground.confidence);
+function findNearestFrameIndex(frames: AnalysisFrame[], tMs: number | undefined) {
+  if (typeof tMs !== "number") return null;
+  let bestIdx = 0;
+  let bestDelta = Number.POSITIVE_INFINITY;
+  frames.forEach((frame, idx) => {
+    if (typeof frame.tMs !== "number") return;
+    const delta = Math.abs(frame.tMs - tMs);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      bestIdx = idx;
     }
   });
+  return frames.length ? bestIdx : null;
+}
 
-  const groundSummary: GroundModel2D = groundYs.length
-    ? {
-        type: "y_scalar",
-        y: Math.round(median(groundYs)),
-        confidence: clamp01(mean(groundConfidences)),
-      }
-    : { type: "unknown", confidence: 0 };
+export async function analyzePogoSideView(
+  uri: string,
+  config: GroundRoiConfig = {}
+): Promise<JumpAnalysis> {
+  const { pixelFrames, batch, measurementStatus } = await sampleFramesForAnalysis(uri);
 
-  const { takeoffIndex, landingIndex, takeoffFrame, landingFrame } = deriveEvents(analyzedFrames);
-  const metrics = deriveMetrics(analyzedFrames, takeoffIndex, landingIndex);
+  const extractedFrames =
+    measurementStatus === "real" && batch?.frames?.length ? batch.frames : toExtractedFrames(pixelFrames);
+  const { groundLine, roi, debug } = computeGroundAndRoi(extractedFrames, config);
+  const { analyzedFrames, contactSignals, rawSamples, stats } = analyzeContactFromRoi(
+    pixelFrames,
+    groundLine.y,
+    roi
+  );
+
+  const contactEvents = detectContactEventsFromSignal(
+    rawSamples.map((s) => ({ tMs: s.tMs, contactScore: s.contactScore }))
+  );
+
+  const takeoffIndex = findNearestFrameIndex(analyzedFrames, contactEvents.takeoffMs);
+  const landingIndex = findNearestFrameIndex(analyzedFrames, contactEvents.landingMs);
+  const metrics = deriveMetrics(analyzedFrames, takeoffIndex ?? -1, landingIndex ?? -1);
 
   const trackedRatio =
-    contactSignals.filter((signal) => signal.footX !== null && signal.confidence > 0.2).length /
+    contactSignals.filter((signal) => signal.confidence > 0.2).length /
     Math.max(1, contactSignals.length);
 
-  const viewOk = groundSummary.type !== "unknown" && groundSummary.confidence > 0.2;
+  const groundSummary: GroundModel2D = Number.isFinite(groundLine.y)
+    ? { type: "y_scalar", y: groundLine.y, confidence: 0.4 }
+    : { type: "unknown", confidence: 0 };
+
+  const viewOk = groundSummary.type !== "unknown";
   const jointsTracked = trackedRatio >= 0.6;
-  const contactDetected = takeoffIndex >= 0 && landingIndex > takeoffIndex;
+  const contactDetected =
+    typeof contactEvents.takeoffMs === "number" && typeof contactEvents.landingMs === "number";
 
   const baseConfidence = clamp01(
     0.2 +
@@ -539,10 +556,10 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
     }.`,
     `Frames: ${analyzedFrames.length}.`,
     `FPS (target): ${TARGET_FPS}.`,
-    `Ground confidence: ${groundSummary.confidence.toFixed(2)}.`,
+    `Ground Y: ${groundLine.y}px (${groundLine.method}).`,
     `Contact frames: ${contactSignals.filter((signal) => signal.inContact).length}.`,
     contactDetected
-      ? `Takeoff frame: ${takeoffIndex}, landing frame: ${landingIndex}.`
+      ? `Takeoff @ ${contactEvents.takeoffMs}ms, landing @ ${contactEvents.landingMs}ms.`
       : "No contact transitions detected.",
     metrics.gctSeconds !== null ? `GCT: ${metrics.gctSeconds.toFixed(3)}s.` : "GCT unavailable.",
     metrics.flightSeconds !== null ? `Flight: ${metrics.flightSeconds.toFixed(3)}s.` : "Flight unavailable.",
@@ -550,10 +567,15 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
       ? []
       : ["Synthetic placeholder output (not a real measurement)."]),
     ...(batch?.error?.message ? [`Frame extraction error: ${batch.error.message}`] : []),
+    ...debug.notes,
+    ...contactEvents.debugNotes,
+    `ContactScore min/mean/max: ${stats.contactScoreMin.toFixed(2)} / ${stats.contactScoreMean.toFixed(
+      2
+    )} / ${stats.contactScoreMax.toFixed(2)}.`,
   ];
 
-  const takeoffTime = takeoffFrame?.tMs;
-  const landingTime = landingFrame?.tMs;
+  const takeoffTime = contactEvents.takeoffMs;
+  const landingTime = contactEvents.landingMs;
 
   return {
     ...EMPTY_ANALYSIS,
@@ -569,13 +591,13 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
     events: {
       takeoff: {
         t: typeof takeoffTime === "number" ? takeoffTime / 1000 : null,
-        frame: takeoffFrame ? takeoffFrame.frameIndex : null,
-        confidence: clamp01(takeoffFrame?.confidence ?? 0),
+        frame: typeof takeoffIndex === "number" ? takeoffIndex : null,
+        confidence: clamp01(stats.contactScoreMean),
       },
       landing: {
         t: typeof landingTime === "number" ? landingTime / 1000 : null,
-        frame: landingFrame ? landingFrame.frameIndex : null,
-        confidence: clamp01(landingFrame?.confidence ?? 0),
+        frame: typeof landingIndex === "number" ? landingIndex : null,
+        confidence: clamp01(stats.contactScoreMean),
       },
     },
     frames: analyzedFrames,
@@ -596,28 +618,48 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
         "pogo-side-view",
         measurementStatus === "real" ? batch?.debug?.provider ?? "web-canvas" : "synthetic",
         measurementStatus === "real" ? "measurement-real" : "synthetic-placeholder",
+        debug.notes.length ? "GROUND_ASSUMED" : "GROUND_MANUAL",
+        "ROI_LOCKED",
+        ...(contactEvents.debugNotes.length ? ["CONTACT_TRANSITION_AMBIGUOUS"] : []),
       ],
+    },
+    analysisDebug: {
+      groundRoi: {
+        ...debug,
+        scores: {
+          contactScoreMin: stats.contactScoreMin,
+          contactScoreMean: stats.contactScoreMean,
+          contactScoreMax: stats.contactScoreMax,
+          edgeEnergyMean: stats.edgeMean,
+          motionEnergyMean: stats.motionMean,
+          bottomBandEnergyMean: stats.bottomMean,
+        },
+      },
     },
   };
 }
 
 export function runPogoAnalyzerSelfTest(): JumpAnalysis {
   const synthetic = generateSyntheticFrames("self-test");
-  const analyzedFrames = synthetic.map((frame) => {
-    const ground = analyzeGround(frame);
-    const contact = analyzeContact(frame, ground);
-    return makeFrame(frame, ground, contact);
-  });
+  const extractedFrames = toExtractedFrames(synthetic);
+  const { groundLine, roi, debug } = computeGroundAndRoi(extractedFrames, {});
+  const { analyzedFrames, rawSamples, stats } = analyzeContactFromRoi(
+    synthetic,
+    groundLine.y,
+    roi
+  );
 
-  const groundYs = analyzedFrames
-    .filter((frame) => frame.ground.type === "y_scalar" && typeof frame.ground.y === "number")
-    .map((frame) => frame.ground.y as number);
-  const groundSummary: GroundModel2D = groundYs.length
-    ? { type: "y_scalar", y: Math.round(median(groundYs)), confidence: 0.5 }
-    : { type: "unknown", confidence: 0 };
+  const groundSummary: GroundModel2D =
+    Number.isFinite(groundLine.y)
+      ? { type: "y_scalar", y: groundLine.y, confidence: 0.4 }
+      : { type: "unknown", confidence: 0 };
 
-  const { takeoffIndex, landingIndex } = deriveEvents(analyzedFrames);
-  const metrics = deriveMetrics(analyzedFrames, takeoffIndex, landingIndex);
+  const contactEvents = detectContactEventsFromSignal(
+    rawSamples.map((s) => ({ tMs: s.tMs, contactScore: s.contactScore }))
+  );
+  const takeoffIndex = findNearestFrameIndex(analyzedFrames, contactEvents.takeoffMs);
+  const landingIndex = findNearestFrameIndex(analyzedFrames, contactEvents.landingMs);
+  const metrics = deriveMetrics(analyzedFrames, takeoffIndex ?? -1, landingIndex ?? -1);
 
   console.info("Pogo analyzer self-test", {
     fps: TARGET_FPS,
@@ -648,17 +690,38 @@ export function runPogoAnalyzerSelfTest(): JumpAnalysis {
     groundSummary,
     quality: {
       overallConfidence: 0.4,
-      notes: ["Self-test synthetic analyzer run.", "Synthetic placeholder output (not real)."],
+      notes: [
+        "Self-test synthetic analyzer run.",
+        "Synthetic placeholder output (not real).",
+        ...debug.notes,
+        ...contactEvents.debugNotes,
+        `ContactScore min/mean/max: ${stats.contactScoreMin.toFixed(2)} / ${stats.contactScoreMean.toFixed(
+          2
+        )} / ${stats.contactScoreMax.toFixed(2)}.`,
+      ],
       reliability: {
         viewOk: true,
         groundDetected: true,
         jointsTracked: true,
-        contactDetected: takeoffIndex >= 0 && landingIndex > takeoffIndex,
+        contactDetected: typeof contactEvents.takeoffMs === "number" && typeof contactEvents.landingMs === "number",
       },
     },
     aiSummary: {
       text: "Synthetic self-test run.",
       tags: ["self-test", "synthetic-placeholder"],
+    },
+    analysisDebug: {
+      groundRoi: {
+        ...debug,
+        scores: {
+          contactScoreMin: stats.contactScoreMin,
+          contactScoreMean: stats.contactScoreMean,
+          contactScoreMax: stats.contactScoreMax,
+          edgeEnergyMean: stats.edgeMean,
+          motionEnergyMean: stats.motionMean,
+          bottomBandEnergyMean: stats.bottomMean,
+        },
+      },
     },
   };
 }

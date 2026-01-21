@@ -155,6 +155,15 @@ export type JumpAnalysis = {
 
   aiSummary: { text: string; tags: string[] };
 
+  analysisDebug?: {
+    groundRoi?: {
+      notes: string[];
+      groundLine?: { y: number; method: "manual" | "auto_edge" | "auto_motion" };
+      roi?: { x: number; y: number; w: number; h: number };
+      scores?: Record<string, number>;
+    };
+  };
+
   // Optional error info if status === "error"
   error?: { message: string; code?: string };
 };
