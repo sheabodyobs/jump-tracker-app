@@ -168,11 +168,15 @@ function requiredOverallConfidence(
 function hardFail(a: JumpAnalysis, notes: string[], config: GateConfig): JumpAnalysis {
   const safeNotes = Array.from(new Set(notes)).filter(Boolean);
   const rel = mergedReliability(a);
+  const measurementStatus = a.measurementStatus ?? "synthetic_placeholder";
+  const summaryTags = ["confidence-gate", "metrics-redacted"];
+  if (measurementStatus !== "real") summaryTags.push("synthetic-placeholder");
 
   return {
     ...EMPTY_ANALYSIS,
     version: a.version ?? EMPTY_ANALYSIS.version,
     status: "error",
+    measurementStatus,
     frames: takeFramesForFailure(a, config),
     groundSummary: a.groundSummary ?? EMPTY_ANALYSIS.groundSummary,
     metrics: redactMetrics(),
@@ -189,7 +193,7 @@ function hardFail(a: JumpAnalysis, notes: string[], config: GateConfig): JumpAna
     },
     aiSummary: {
       text: "Insufficient confidence to report metrics.",
-      tags: ["confidence-gate", "metrics-redacted"],
+      tags: summaryTags,
     },
     error: {
       message: safeNotes[0] ?? "Confidence gate failed",
@@ -204,11 +208,18 @@ export function applyConfidenceGate(
 ): JumpAnalysis {
   const config: GateConfig = { ...DEFAULT_CONFIG, ...(override ?? {}) };
 
+  const measurementStatus = draft.measurementStatus ?? "synthetic_placeholder";
+
   const rel = mergedReliability(draft);
 
   const notes: string[] = [];
   const userNotes = Array.isArray(draft?.quality?.notes) ? draft.quality.notes : [];
   if (userNotes.length) notes.push(...userNotes);
+
+  if (measurementStatus !== "real") {
+    notes.push("Synthetic placeholder result; not a real measurement.");
+    return hardFail({ ...draft, measurementStatus }, notes, config);
+  }
 
   // Must claim "complete" to ever show metrics
   if (draft.status !== "complete") {
@@ -382,6 +393,7 @@ export function applyConfidenceGate(
   return {
     ...draft,
     status: "complete",
+    measurementStatus,
     metrics: {
       ...mIn,
       gctSeconds: gated.gctSeconds,

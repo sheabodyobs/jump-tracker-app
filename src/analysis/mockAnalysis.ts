@@ -3,6 +3,7 @@ import { type JumpAnalysis } from "./jumpAnalysisContract";
 export const MOCK_ANALYSIS: JumpAnalysis = {
   version: "0.2.0",
   status: "complete",
+  measurementStatus: "synthetic_placeholder",
   metrics: {
     gctSeconds: 0.18,
     gctMs: 180,

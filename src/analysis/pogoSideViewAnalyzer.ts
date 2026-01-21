@@ -392,6 +392,7 @@ function deriveMetrics(frames: AnalysisFrame[], takeoffIndex: number, landingInd
 export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
   const frames = await extractFramesWeb(uri);
   const pixelFrames = frames.length ? frames : generateSyntheticFrames(uri);
+  const measurementStatus = frames.length ? "real" : "synthetic_placeholder";
 
   const analyzedFrames: AnalysisFrame[] = [];
   const groundConfidences: number[] = [];
@@ -429,13 +430,15 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
   const jointsTracked = trackedRatio >= 0.6;
   const contactDetected = takeoffIndex >= 0 && landingIndex > takeoffIndex;
 
-  const overallConfidence = clamp01(
+  const baseConfidence = clamp01(
     0.2 +
       (viewOk ? 0.3 : 0) +
       (jointsTracked ? 0.25 : 0) +
       (contactDetected ? 0.25 : 0) +
       (groundSummary.confidence > 0.4 ? 0.1 : 0)
   );
+  const overallConfidence =
+    measurementStatus === "real" ? baseConfidence : Math.min(baseConfidence, 0.35);
 
   const notes = [
     `Analyzer: ${frames.length ? "web-canvas" : "synthetic"}.`,
@@ -448,6 +451,9 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
       : "No contact transitions detected.",
     metrics.gctSeconds !== null ? `GCT: ${metrics.gctSeconds.toFixed(3)}s.` : "GCT unavailable.",
     metrics.flightSeconds !== null ? `Flight: ${metrics.flightSeconds.toFixed(3)}s.` : "Flight unavailable.",
+    ...(measurementStatus === "real"
+      ? []
+      : ["Synthetic placeholder output (not a real measurement)."]),
   ];
 
   const takeoffTime = takeoffFrame?.tMs;
@@ -456,6 +462,7 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
   return {
     ...EMPTY_ANALYSIS,
     status: "complete",
+    measurementStatus,
     metrics: {
       ...EMPTY_ANALYSIS.metrics,
       gctSeconds: metrics.gctSeconds,
@@ -489,7 +496,11 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
     },
     aiSummary: {
       text: contactDetected ? "Contact and flight detected." : "Contact detection uncertain.",
-      tags: ["pogo-side-view", frames.length ? "web-canvas" : "synthetic"],
+      tags: [
+        "pogo-side-view",
+        frames.length ? "web-canvas" : "synthetic",
+        measurementStatus === "real" ? "measurement-real" : "synthetic-placeholder",
+      ],
     },
   };
 }
@@ -525,6 +536,7 @@ export function runPogoAnalyzerSelfTest(): JumpAnalysis {
   return {
     ...EMPTY_ANALYSIS,
     status: "complete",
+    measurementStatus: "synthetic_placeholder",
     metrics: {
       ...EMPTY_ANALYSIS.metrics,
       gctSeconds: metrics.gctSeconds,
@@ -540,7 +552,7 @@ export function runPogoAnalyzerSelfTest(): JumpAnalysis {
     groundSummary,
     quality: {
       overallConfidence: 0.4,
-      notes: ["Self-test synthetic analyzer run."],
+      notes: ["Self-test synthetic analyzer run.", "Synthetic placeholder output (not real)."],
       reliability: {
         viewOk: true,
         groundDetected: true,
@@ -548,6 +560,9 @@ export function runPogoAnalyzerSelfTest(): JumpAnalysis {
         contactDetected: takeoffIndex >= 0 && landingIndex > takeoffIndex,
       },
     },
-    aiSummary: { text: "Synthetic self-test run.", tags: ["self-test"] },
+    aiSummary: {
+      text: "Synthetic self-test run.",
+      tags: ["self-test", "synthetic-placeholder"],
+    },
   };
 }

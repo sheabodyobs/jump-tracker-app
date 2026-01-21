@@ -25,6 +25,7 @@ const FALLBACK_ANALYSIS: JumpAnalysis = {
 const HARD_FALLBACK: JumpAnalysis = {
   version: "0.2.0",
   status: "pending",
+  measurementStatus: "synthetic_placeholder",
   metrics: {
     gctSeconds: null,
     gctMs: null,
@@ -60,7 +61,15 @@ function coerceAnalysis(a: unknown): JumpAnalysis {
   const obj = a as Partial<JumpAnalysis>;
 
   // Minimal guards for app safety. If anything is missing, fall back.
-  if (!obj.version || !obj.status || !obj.metrics || !obj.events || !obj.quality || !obj.aiSummary) {
+  if (
+    !obj.version ||
+    !obj.status ||
+    !obj.measurementStatus ||
+    !obj.metrics ||
+    !obj.events ||
+    !obj.quality ||
+    !obj.aiSummary
+  ) {
     return HARD_FALLBACK;
   }
 
@@ -132,6 +141,7 @@ export default function HomeScreen() {
 
   const safe = coerceAnalysis(analysis);
   const isComplete = safe.status === "complete";
+  const isRealMeasurement = safe.measurementStatus === "real";
 
   const metrics = safe.metrics;
   const events = safe.events;
@@ -206,6 +216,14 @@ export default function HomeScreen() {
         <Text style={styles.sectionTitle}>Status</Text>
         <Text style={styles.value}>{safe.status}</Text>
         <Text style={styles.muted}>v{safe.version}</Text>
+        <Text style={styles.muted}>
+          Measurement: {isRealMeasurement ? "real" : "simulated (not real)"}
+        </Text>
+        {!isRealMeasurement && (
+          <Text style={styles.warning}>
+            Simulated output. Not a real measurement.
+          </Text>
+        )}
       </View>
 
       <View style={styles.card}>
@@ -237,7 +255,7 @@ export default function HomeScreen() {
           - render metrics ONLY when status === "complete"
           - otherwise show explanation + notes
       */}
-      {isComplete ? (
+      {isComplete && isRealMeasurement ? (
         <>
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Primary</Text>
@@ -304,7 +322,9 @@ export default function HomeScreen() {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Metrics hidden</Text>
           <Text style={styles.value}>
-            {safe.status === "error"
+            {!isRealMeasurement
+              ? "Simulated output: measurements unavailable."
+              : safe.status === "error"
               ? "Insufficient confidence to report metrics."
               : "Analysis not complete yet."}
           </Text>
@@ -352,4 +372,5 @@ const styles = StyleSheet.create({
   row: { fontSize: 14 },
   value: { fontSize: 14, fontWeight: "600" },
   muted: { fontSize: 12, opacity: 0.7 },
+  warning: { fontSize: 12, fontWeight: "600", color: "#b45309" },
 });

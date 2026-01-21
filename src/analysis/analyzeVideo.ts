@@ -40,6 +40,7 @@ export async function analyzeVideo(uri: string): Promise<JumpAnalysis> {
       draft = {
         ...MOCK_ANALYSIS,
         status: "complete",
+        measurementStatus: "synthetic_placeholder",
         quality: {
           ...MOCK_ANALYSIS.quality,
           notes: [...(MOCK_ANALYSIS.quality?.notes ?? []), `Analyzer fallback: ${message}`],
@@ -58,6 +59,7 @@ export async function analyzeVideo(uri: string): Promise<JumpAnalysis> {
     const draft: JumpAnalysis = {
       ...EMPTY_ANALYSIS,
       status: "error",
+      measurementStatus: "synthetic_placeholder",
       quality: {
         overallConfidence: 0,
         notes: [`Analyze failed: ${message}`],

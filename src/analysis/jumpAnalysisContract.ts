@@ -123,6 +123,7 @@ export type JumpAnalysis = {
   version: "0.2.0";
 
   status: AnalysisStatus;
+  measurementStatus: "real" | "synthetic_placeholder";
 
   // Keep your original shape, extend it.
   metrics: JumpMetrics;
@@ -163,6 +164,7 @@ const ground0: GroundModel2D = { type: "unknown", confidence: 0 };
 export const EMPTY_ANALYSIS: JumpAnalysis = {
   version: "0.2.0",
   status: "pending",
+  measurementStatus: "synthetic_placeholder",
   metrics: {
     gctSeconds: null,
     gctMs: null,
