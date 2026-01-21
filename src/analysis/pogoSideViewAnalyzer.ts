@@ -536,6 +536,9 @@ function buildSlowMoFailure(note: string, nominalFps?: number): JumpAnalysis {
     ...EMPTY_ANALYSIS,
     status: "complete",
     measurementStatus: "synthetic_placeholder",
+    capture: {
+      nominalFps,
+    },
     quality: {
       overallConfidence: 0,
       notes: [note],
@@ -802,6 +805,10 @@ export async function analyzePogoSideView(
     ...EMPTY_ANALYSIS,
     status: "complete",
     measurementStatus,
+    capture: {
+      nominalFps: metadata.nominalFps,
+      durationMs: metadata.durationMs,
+    },
     metrics: {
       ...EMPTY_ANALYSIS.metrics,
       gctSeconds: metrics.gctSeconds,

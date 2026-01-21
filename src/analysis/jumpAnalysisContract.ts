@@ -155,6 +155,11 @@ export type JumpAnalysis = {
 
   aiSummary: { text: string; tags: string[] };
 
+  capture?: {
+    nominalFps?: number;
+    durationMs?: number;
+  };
+
   analysisDebug?: {
     groundRoi?: {
       notes: string[];
@@ -242,6 +247,7 @@ export const EMPTY_ANALYSIS: JumpAnalysis = {
   },
   frames: [],
   groundSummary: ground0,
+  capture: {},
   quality: {
     overallConfidence: 0,
     notes: [],
