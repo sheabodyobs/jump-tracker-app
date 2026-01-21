@@ -123,6 +123,7 @@ export type JumpAnalysis = {
   version: "0.2.0";
 
   status: AnalysisStatus;
+  measurementStatus: "real" | "synthetic_placeholder";
 
   // Keep your original shape, extend it.
   metrics: JumpMetrics;
@@ -154,31 +155,25 @@ export type JumpAnalysis = {
 
   aiSummary: { text: string; tags: string[] };
 
+  analysisDebug?: {
+    groundRoi?: {
+      notes: string[];
+      groundLine?: { y: number; method: "manual" | "auto_edge" | "auto_motion" };
+      roi?: { x: number; y: number; w: number; h: number };
+      scores?: Record<string, number>;
+    };
+  };
+
   // Optional error info if status === "error"
   error?: { message: string; code?: string };
 };
 
-const kp0 = (): Keypoint2D => ({ x: null, y: null, confidence: 0 });
-
-const leg0 = (): LegJoints2D => ({
-  hip: kp0(),
-  knee: kp0(),
-  ankle: kp0(),
-  heel: kp0(),
-  toe: kp0(),
-});
-
 const ground0: GroundModel2D = { type: "unknown", confidence: 0 };
-
-const contact0 = (): ContactProbability => ({
-  heel: 0,
-  toe: 0,
-  inContact: false,
-});
 
 export const EMPTY_ANALYSIS: JumpAnalysis = {
   version: "0.2.0",
   status: "pending",
+  measurementStatus: "synthetic_placeholder",
   metrics: {
     gctSeconds: null,
     gctMs: null,
