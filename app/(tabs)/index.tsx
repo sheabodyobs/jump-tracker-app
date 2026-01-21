@@ -10,6 +10,7 @@ import {
 
 import { analyzeVideo } from "../../src/analysis/analyzeVideo";
 import { MOCK_ANALYSIS } from "../../src/analysis/mockAnalysis";
+import { selfTestExtractFrames } from "../../src/video/selfTestExtractFrames";
 
 /**
  * Runtime-safe fallback
@@ -85,6 +86,7 @@ export default function HomeScreen() {
   const [analysis, setAnalysis] = useState<JumpAnalysis>(initial);
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [frameTestReport, setFrameTestReport] = useState<string>("");
 
   async function pickVideo() {
     try {
@@ -125,6 +127,34 @@ export default function HomeScreen() {
       Alert.alert("Run Analysis", "Analysis failed.");
     } finally {
       setIsAnalyzing(false);
+    }
+  }
+
+  async function runFrameTest() {
+    if (!videoUri) {
+      Alert.alert("Frame Test", "Pick a video first.");
+      return;
+    }
+
+    setFrameTestReport("Running frame extraction test...");
+
+    try {
+      const result = await selfTestExtractFrames(videoUri);
+      const frames = result.frames ?? [];
+      const first = frames[0];
+      const last = frames[frames.length - 1];
+      const lines = [
+        `Provider: ${result.debug?.provider ?? "unknown"}`,
+        `Measurement: ${result.measurementStatus}`,
+        `Frames: ${frames.length}`,
+        `First tMs: ${first?.tMs ?? "—"}`,
+        `Last tMs: ${last?.tMs ?? "—"}`,
+        `Size: ${first?.width ?? "—"}x${first?.height ?? "—"}`,
+        result.error ? `Error: ${result.error.code} ${result.error.message}` : "Error: none",
+      ];
+      setFrameTestReport(lines.join("\n"));
+    } catch {
+      setFrameTestReport("Frame extraction test failed.");
     }
   }
 
@@ -202,6 +232,10 @@ export default function HomeScreen() {
 
         <Pressable style={[styles.button, styles.buttonSecondary]} onPress={reset}>
           <Text style={styles.buttonText}>Reset</Text>
+        </Pressable>
+
+        <Pressable style={[styles.button, styles.buttonSecondary]} onPress={runFrameTest}>
+          <Text style={styles.buttonText}>Test frames</Text>
         </Pressable>
       </View>
 
@@ -342,6 +376,11 @@ export default function HomeScreen() {
         <Text style={styles.muted}>
           {summaryTags.length ? summaryTags.map((t) => `#${t}`).join(" ") : ""}
         </Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Frame extraction self-test</Text>
+        <Text style={styles.muted}>{frameTestReport || "—"}</Text>
       </View>
     </View>
   );

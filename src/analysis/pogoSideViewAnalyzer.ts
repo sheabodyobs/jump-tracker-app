@@ -1,8 +1,13 @@
 // src/analysis/pogoSideViewAnalyzer.ts
+import { Platform } from "react-native";
+
 import { type JumpAnalysis, EMPTY_ANALYSIS, type AnalysisFrame, type GroundModel2D } from "./jumpAnalysisContract";
+import type { ExtractedFrameBatch, MeasurementStatus } from "../video/FrameProvider";
+import { iosAvFoundationFrameProvider } from "../video/iosAvFoundationFrameProvider";
 
 const TARGET_FPS = 30;
 const MAX_FRAMES = 36;
+const DEFAULT_SAMPLE_WINDOW_MS = 2000;
 
 type PixelFrame = {
   width: number;
@@ -187,6 +192,96 @@ function generateSyntheticFrames(uri: string): PixelFrame[] {
   }
 
   return frames;
+}
+
+function decodeBase64(base64: string): Uint8ClampedArray {
+  const atobFn = globalThis?.atob;
+  if (typeof atobFn === "function") {
+    const binary = atobFn(base64);
+    const bytes = new Uint8ClampedArray(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let output: number[] = [];
+  let buffer = 0;
+  let bits = 0;
+
+  for (let i = 0; i < base64.length; i += 1) {
+    const char = base64[i];
+    if (char === "=") break;
+    const idx = chars.indexOf(char);
+    if (idx === -1) continue;
+    buffer = (buffer << 6) | idx;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      output.push((buffer >> bits) & 0xff);
+    }
+  }
+
+  return new Uint8ClampedArray(output);
+}
+
+function buildEvenTimestamps(durationMs: number, count: number) {
+  const span = Math.max(1, durationMs);
+  const step = span / Math.max(1, count - 1);
+  return Array.from({ length: count }, (_, i) => Math.round(i * step));
+}
+
+async function sampleFramesForAnalysis(uri: string): Promise<{
+  pixelFrames: PixelFrame[];
+  batch?: ExtractedFrameBatch;
+  measurementStatus: MeasurementStatus;
+}> {
+  if (Platform.OS === "ios") {
+    const initialTimestamps = buildEvenTimestamps(DEFAULT_SAMPLE_WINDOW_MS, MAX_FRAMES);
+    const initialBatch = await iosAvFoundationFrameProvider.sampleFrames(uri, initialTimestamps, {
+      maxWidth: 256,
+      format: "rgba",
+    });
+
+    const durationMs = initialBatch.durationMs;
+    const batch =
+      durationMs && durationMs > DEFAULT_SAMPLE_WINDOW_MS
+        ? await iosAvFoundationFrameProvider.sampleFrames(
+            uri,
+            buildEvenTimestamps(durationMs, MAX_FRAMES),
+            { maxWidth: 256, format: "rgba" }
+          )
+        : initialBatch;
+
+    if (batch.measurementStatus === "real" && batch.frames.length) {
+      const pixelFrames = batch.frames.map((frame) => ({
+        width: frame.width,
+        height: frame.height,
+        tMs: frame.tMs,
+        data: decodeBase64(frame.dataBase64),
+      }));
+      return { pixelFrames, batch, measurementStatus: "real" };
+    }
+
+    return {
+      pixelFrames: generateSyntheticFrames(uri),
+      batch,
+      measurementStatus: "synthetic_placeholder",
+    };
+  }
+
+  if (Platform.OS === "web") {
+    const frames = await extractFramesWeb(uri);
+    if (frames.length) {
+      return { pixelFrames: frames, measurementStatus: "real" };
+    }
+  }
+
+  return {
+    pixelFrames: generateSyntheticFrames(uri),
+    measurementStatus: "synthetic_placeholder",
+  };
 }
 
 function analyzeGround(frame: PixelFrame): GroundSignal {
@@ -390,9 +485,7 @@ function deriveMetrics(frames: AnalysisFrame[], takeoffIndex: number, landingInd
 }
 
 export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
-  const frames = await extractFramesWeb(uri);
-  const pixelFrames = frames.length ? frames : generateSyntheticFrames(uri);
-  const measurementStatus = frames.length ? "real" : "synthetic_placeholder";
+  const { pixelFrames, batch, measurementStatus } = await sampleFramesForAnalysis(uri);
 
   const analyzedFrames: AnalysisFrame[] = [];
   const groundConfidences: number[] = [];
@@ -441,7 +534,9 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
     measurementStatus === "real" ? baseConfidence : Math.min(baseConfidence, 0.35);
 
   const notes = [
-    `Analyzer: ${frames.length ? "web-canvas" : "synthetic"}.`,
+    `Analyzer: ${
+      measurementStatus === "real" ? batch?.debug?.provider ?? "web-canvas" : "synthetic"
+    }.`,
     `Frames: ${analyzedFrames.length}.`,
     `FPS (target): ${TARGET_FPS}.`,
     `Ground confidence: ${groundSummary.confidence.toFixed(2)}.`,
@@ -454,6 +549,7 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
     ...(measurementStatus === "real"
       ? []
       : ["Synthetic placeholder output (not a real measurement)."]),
+    ...(batch?.error?.message ? [`Frame extraction error: ${batch.error.message}`] : []),
   ];
 
   const takeoffTime = takeoffFrame?.tMs;
@@ -498,7 +594,7 @@ export async function analyzePogoSideView(uri: string): Promise<JumpAnalysis> {
       text: contactDetected ? "Contact and flight detected." : "Contact detection uncertain.",
       tags: [
         "pogo-side-view",
-        frames.length ? "web-canvas" : "synthetic",
+        measurementStatus === "real" ? batch?.debug?.provider ?? "web-canvas" : "synthetic",
         measurementStatus === "real" ? "measurement-real" : "synthetic-placeholder",
       ],
     },
