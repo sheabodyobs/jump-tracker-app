@@ -158,8 +158,6 @@ export type JumpAnalysis = {
   error?: { message: string; code?: string };
 };
 
-const kp0 = (): Keypoint2D => ({ x: null, y: null, confidence: 0 });
-
 const ground0: GroundModel2D = { type: "unknown", confidence: 0 };
 
 export const EMPTY_ANALYSIS: JumpAnalysis = {

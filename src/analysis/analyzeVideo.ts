@@ -1,6 +1,7 @@
 // src/analysis/analyzeVideo.ts
 import { applyConfidenceGate } from "./confidenceGate";
 import { type JumpAnalysis, EMPTY_ANALYSIS } from "./jumpAnalysisContract";
+import { analyzePogoSideView } from "./pogoSideViewAnalyzer";
 import { MOCK_ANALYSIS } from "./mockAnalysis";
 
 /**
@@ -30,11 +31,21 @@ export async function analyzeVideo(uri: string): Promise<JumpAnalysis> {
     // → detectContact
     // → deriveMetrics
 
-    // Draft result (mocked, contract-complete)
-    const draft: JumpAnalysis = {
-      ...MOCK_ANALYSIS,
-      status: "complete",
-    };
+    let draft: JumpAnalysis;
+
+    try {
+      draft = await analyzePogoSideView(uri);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown analyzer error";
+      draft = {
+        ...MOCK_ANALYSIS,
+        status: "complete",
+        quality: {
+          ...MOCK_ANALYSIS.quality,
+          notes: [...(MOCK_ANALYSIS.quality?.notes ?? []), `Analyzer fallback: ${message}`],
+        },
+      };
+    }
 
     // Enforce confidence gate
     // If confidence < threshold, this will downgrade status
