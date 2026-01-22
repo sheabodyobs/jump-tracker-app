@@ -25,6 +25,7 @@ const MAX_FRAMES = 36;
 const DEFAULT_SAMPLE_WINDOW_MS = 2000;
 const CONTACT_FRAME_THRESHOLD = 0.55;
 const SLOW_MO_FPS_THRESHOLD = 120;
+const FOOT_PATCH_CONFIDENCE_MIN = 0.25;
 
 type PixelFrame = {
   width: number;
@@ -420,9 +421,12 @@ type PipelineResult = {
   footPatchConfidence: number;
   contactConfidence: number;
   eventConfidence: number;
+  roiSource: RoiSource;
   rejectionReasons: string[];
   passed: boolean;
 };
+
+type RoiSource = 'foot_patch' | 'ground_inference' | 'legacy';
 
 function orchestratePipeline(
   grayscaleFrames: { width: number; height: number; data: Uint8ClampedArray }[],
@@ -430,20 +434,28 @@ function orchestratePipeline(
   roi: { x: number; y: number; w: number; h: number },
   pixelFrames: PixelFrame[],
   rawSamples: RawContactSample[],
-  footPatchResult: FootPatchResult | null
+  footPatchResult: FootPatchResult | null,
+  footPatchConfidenceInput: number,
+  roiSource: RoiSource
 ): PipelineResult {
   const reasons: string[] = [];
   
   // Stage 1: Ground confidence (already computed, use existing)
   const GROUND_CONFIDENCE_MIN = 0.3;
-  const groundConfidence = groundModel.type !== "unknown" ? groundModel.confidence : 0;
+  let groundConfidence = groundModel.type !== "unknown" ? groundModel.confidence : 0;
   if (groundConfidence < GROUND_CONFIDENCE_MIN) {
     reasons.push(`Ground confidence too low: ${groundConfidence.toFixed(2)} < ${GROUND_CONFIDENCE_MIN}`);
   }
 
   // Stage 2: Foot patch confidence
-  const footPatchConfidence = footPatchResult?.confidence ?? 0;
-  if (footPatchConfidence < 0.3) {
+  let footPatchConfidence = Number.isFinite(footPatchConfidenceInput)
+    ? footPatchConfidenceInput
+    : footPatchResult?.confidence ?? 0;
+  if (roiSource === 'legacy') {
+    reasons.push('ROI source legacy: rejected');
+    footPatchConfidence = 0;
+  }
+  if (footPatchConfidence < FOOT_PATCH_CONFIDENCE_MIN) {
     reasons.push(`Foot patch confidence too low: ${footPatchConfidence.toFixed(2)}`);
   }
 
@@ -473,7 +485,7 @@ function orchestratePipeline(
       
       const jumpEvents = extractJumpEvents(
         contactState,
-        pixelFrames,
+        pixelFrames.map((f) => f.tMs),
         {
           minGctMs: 50,
           maxGctMs: 450,
@@ -489,17 +501,44 @@ function orchestratePipeline(
       if (eventConfidence < 0.25) {
         reasons.push(`Event confidence too low: ${eventConfidence.toFixed(2)}`);
       }
+      if (jumpEvents.diagnostics.rejection) {
+        reasons.push(
+          `${jumpEvents.diagnostics.rejection.stage}: ${jumpEvents.diagnostics.rejection.reason}`
+        );
+      }
     }
   } catch (e) {
     reasons.push(`Event extraction failed: ${e instanceof Error ? e.message : "unknown"}`);
     eventConfidence = 0;
   }
 
+  // Confidence invariants: must be finite and within [0,1]
+  const confidenceChecks: Array<{ name: string; value: number }> = [
+    { name: 'ground', value: groundConfidence },
+    { name: 'foot_patch', value: footPatchConfidence },
+    { name: 'contact', value: contactConfidence },
+    { name: 'event', value: eventConfidence },
+  ];
+  for (const { name, value } of confidenceChecks) {
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
+      reasons.push(`Invalid ${name} confidence: ${value}`);
+      if (name === 'ground') {
+        groundConfidence = 0;
+      } else if (name === 'foot_patch') {
+        footPatchConfidence = 0;
+      } else if (name === 'contact') {
+        contactConfidence = 0;
+      } else if (name === 'event') {
+        eventConfidence = 0;
+      }
+    }
+  }
+
   // Overall pass: all stages above minimum
   const CONFIDENCE_THRESHOLD = 0.25;
-  const passed = 
+  const passed =
     groundConfidence >= GROUND_CONFIDENCE_MIN &&
-    footPatchConfidence >= CONFIDENCE_THRESHOLD &&
+    footPatchConfidence >= FOOT_PATCH_CONFIDENCE_MIN &&
     contactConfidence >= CONFIDENCE_THRESHOLD &&
     eventConfidence >= CONFIDENCE_THRESHOLD;
 
@@ -512,6 +551,7 @@ function orchestratePipeline(
     footPatchConfidence,
     contactConfidence,
     eventConfidence,
+    roiSource,
     rejectionReasons: reasons,
     passed,
   };
@@ -774,6 +814,7 @@ export async function analyzePogoSideView(
   let roi: { x: number; y: number; w: number; h: number };
   let footPatchResult: FootPatchResult | null = null;
   let footPatchConfidence = 0;
+  let roiSource: RoiSource = 'legacy';
 
   if (groundConfident) {
     footPatchResult = detectFootPatch(grayscaleFrames, groundModel, {
@@ -786,24 +827,28 @@ export async function analyzePogoSideView(
     });
   }
 
-  if (footPatchResult && footPatchResult.confidence >= 0.25) {
+  if (footPatchResult && footPatchResult.confidence >= FOOT_PATCH_CONFIDENCE_MIN) {
     roi = footPatchResult.roi;
     footPatchConfidence = footPatchResult.confidence;
+    roiSource = 'foot_patch';
   } else if (groundDetectorOutput.line) {
     // Fallback to motion-based ROI from ground inference (legacy)
     const roiInference = inferRoiFromGround(grayscaleFrames, groundDetectorOutput);
     if (roiInference.roi) {
       roi = roiInference.roi;
-      footPatchConfidence = Math.min(0.25, roiInference.confidence); // keep low to encourage rejection
+      footPatchConfidence = Math.min(FOOT_PATCH_CONFIDENCE_MIN, roiInference.confidence); // keep low to encourage rejection
+      roiSource = 'ground_inference';
     } else {
       const { roi: legacyRoi } = computeGroundAndRoi(extractedFrames, config);
       roi = legacyRoi;
       footPatchConfidence = 0.1;
+      roiSource = 'legacy';
     }
   } else {
     const { roi: legacyRoi } = computeGroundAndRoi(extractedFrames, config);
     roi = legacyRoi;
     footPatchConfidence = 0.1;
+    roiSource = 'legacy';
   }
 
   // Determine groundLine.y for downstream code (legacy compatibility)
@@ -829,7 +874,16 @@ export async function analyzePogoSideView(
   );
 
   // ========== NEW: Full pipeline confidence gating ==========
-  const pipelineResult = orchestratePipeline(grayscaleFrames, groundModel, roi, pixelFrames, rawSamples, footPatchResult);
+  const pipelineResult = orchestratePipeline(
+    grayscaleFrames,
+    groundModel,
+    roi,
+    pixelFrames,
+    rawSamples,
+    footPatchResult,
+    footPatchConfidence,
+    roiSource
+  );
   // ==========================================================
 
   const lowerBodyResult: { samples: BlobSample[]; debug: LowerBodyTrackerDebug } =
@@ -885,7 +939,7 @@ export async function analyzePogoSideView(
   
   const jumpEvents = extractJumpEvents(
     contactState,
-    pixelFrames,
+    pixelFrames.map((f) => f.tMs),
     {
       minGctMs: 50,
       maxGctMs: 450,
@@ -1064,7 +1118,7 @@ export async function analyzePogoSideView(
       : null;
 
   // ========== FAIL-SAFE: No metrics if ground OR pipeline confidence below threshold ==========
-  const metricsGated = groundConfident && pipelineResult.passed
+  let metricsGated = groundConfident && pipelineResult.passed
     ? {
         ...EMPTY_ANALYSIS.metrics,
         gctSeconds: metrics.gctSeconds,
@@ -1081,6 +1135,16 @@ export async function analyzePogoSideView(
         ...EMPTY_ANALYSIS.metrics,
         footAngleDeg: { takeoff: null, landing: null, confidence: 0 },
       };
+
+  // Invariant: metrics must never be emitted when pipeline did not pass
+  const hasMetrics = metricsGated.gctMs !== null || metricsGated.flightSeconds !== null;
+  if (hasMetrics && !pipelineResult.passed) {
+    pipelineResult.rejectionReasons.push('Metrics emitted despite failed pipeline');
+    metricsGated = {
+      ...EMPTY_ANALYSIS.metrics,
+      footAngleDeg: { takeoff: null, landing: null, confidence: 0 },
+    };
+  }
 
   const eventsGated = groundConfident && pipelineResult.passed
     ? {
@@ -1128,6 +1192,7 @@ export async function analyzePogoSideView(
         contactConfidence: pipelineResult.contactConfidence,
         eventConfidence: pipelineResult.eventConfidence,
         rejectionReasons: pipelineResult.rejectionReasons,
+        roiSource: pipelineResult.roiSource,
       },
     },
     aiSummary: {

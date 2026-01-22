@@ -5,9 +5,9 @@ import { extractJumpEvents } from '../eventExtractor';
  */
 function testSingleHop(): void {
   const state: (0 | 1)[] = [0, 0, 1, 1, 1, 0, 0];
-  const frames = state.map((_, i) => ({ tMs: i * 100 })); // 0, 100, 200, 300, 400, 500, 600
+  const timestamps = state.map((_, i) => i * 100); // 0, 100, 200, 300, 400, 500, 600
 
-  const result = extractJumpEvents(state, frames);
+  const result = extractJumpEvents(state, timestamps);
 
   if (result.landings.length !== 1) {
     throw new Error(`Expected 1 landing, got ${result.landings.length}`);
@@ -44,9 +44,9 @@ function testSingleHop(): void {
 function testMultipleHops(): void {
   // Pattern: flight (0,0) → landing (1,1,1) → takeoff (0,0) → landing (1,1) → takeoff (0)
   const state: (0 | 1)[] = [0, 0, 1, 1, 1, 0, 0, 1, 1, 0];
-  const frames = state.map((_, i) => ({ tMs: i * 100 }));
+  const timestamps = state.map((_, i) => i * 100);
 
-  const result = extractJumpEvents(state, frames);
+  const result = extractJumpEvents(state, timestamps);
 
   if (result.hops.length !== 2) {
     throw new Error(`Expected 2 hops, got ${result.hops.length}`);
@@ -75,14 +75,9 @@ function testMultipleHops(): void {
 function testGctTooShort(): void {
   // Landing at 100, takeoff at 120 (GCT = 20ms, below default min of 50ms)
   const state: (0 | 1)[] = [0, 1, 1, 0];
-  const frames = [
-    { tMs: 0 },
-    { tMs: 100 },
-    { tMs: 120 },
-    { tMs: 200 },
-  ];
+  const timestamps = [0, 100, 120, 200];
 
-  const result = extractJumpEvents(state, frames, {
+  const result = extractJumpEvents(state, timestamps, {
     minGctMs: 50,
     maxGctMs: 450,
   });
@@ -108,9 +103,9 @@ function testGctTooShort(): void {
 function testFlightTooLong(): void {
   // Landing at 100, takeoff at 200, next landing at 1200 (flight = 1000ms, above default max of 900ms)
   const state: (0 | 1)[] = [0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-  const frames = state.map((_, i) => ({ tMs: i * 100 }));
+  const timestamps = state.map((_, i) => i * 100);
 
-  const result = extractJumpEvents(state, frames, {
+  const result = extractJumpEvents(state, timestamps, {
     minGctMs: 50,
     maxGctMs: 450,
     minFlightMs: 100,
@@ -150,9 +145,9 @@ function testEmptyState(): void {
  */
 function testNoTransitions(): void {
   const state: (0 | 1)[] = [0, 0, 0, 0];
-  const frames = state.map((_, i) => ({ tMs: i * 100 }));
+  const timestamps = state.map((_, i) => i * 100);
 
-  const result = extractJumpEvents(state, frames);
+  const result = extractJumpEvents(state, timestamps);
 
   if (result.landings.length !== 0 || result.takeoffs.length !== 0) {
     throw new Error('Expected no events for constant state');
@@ -175,8 +170,8 @@ function testNoTransitions(): void {
 function testConfidenceComputation(): void {
   // Valid hop: should have good confidence
   const state1: (0 | 1)[] = [0, 1, 1, 0];
-  const frames1 = state1.map((_, i) => ({ tMs: i * 100 }));
-  const result1 = extractJumpEvents(state1, frames1);
+  const timestamps1 = state1.map((_, i) => i * 100);
+  const result1 = extractJumpEvents(state1, timestamps1);
 
   if (result1.hops.length !== 1 || result1.confidence <= 0.5) {
     throw new Error(`Expected good confidence for valid hop, got ${result1.confidence}`);
@@ -184,8 +179,8 @@ function testConfidenceComputation(): void {
 
   // Multiple valid hops: should have excellent confidence
   const state2: (0 | 1)[] = [0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0];
-  const frames2 = state2.map((_, i) => ({ tMs: i * 100 }));
-  const result2 = extractJumpEvents(state2, frames2);
+  const timestamps2 = state2.map((_, i) => i * 100);
+  const result2 = extractJumpEvents(state2, timestamps2);
 
   if (result2.hops.length !== 3) {
     throw new Error(`Expected 3 hops, got ${result2.hops.length}`);
@@ -204,9 +199,9 @@ function testConfidenceComputation(): void {
 function testMedianComputation(): void {
   // Three hops with GCT: 200, 300, 400 → median = 300
   const state: (0 | 1)[] = [0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0];
-  const frames = state.map((_, i) => ({ tMs: i * 100 }));
+  const timestamps = state.map((_, i) => i * 100);
 
-  const result = extractJumpEvents(state, frames, {
+  const result = extractJumpEvents(state, timestamps, {
     minGctMs: 50,
     maxGctMs: 500,
   });
@@ -229,9 +224,9 @@ function testMedianComputation(): void {
 function testIncompleteLastHop(): void {
   // Landing at 100, takeoff at 300, no next landing
   const state: (0 | 1)[] = [0, 1, 1, 0];
-  const frames = state.map((_, i) => ({ tMs: i * 100 }));
+  const timestamps = state.map((_, i) => i * 100);
 
-  const result = extractJumpEvents(state, frames);
+  const result = extractJumpEvents(state, timestamps);
 
   if (result.hops.length !== 1) {
     throw new Error(`Expected 1 hop with null flightMs`);
@@ -253,16 +248,16 @@ function testIncompleteLastHop(): void {
  */
 function testCustomBounds(): void {
   const state: (0 | 1)[] = [0, 1, 1, 0];
-  const frames = state.map((_, i) => ({ tMs: i * 100 })); // GCT = 200ms
+  const timestamps = state.map((_, i) => i * 100); // GCT = 200ms
 
   // Default bounds (min: 50, max: 450) → should pass
-  const result1 = extractJumpEvents(state, frames);
+  const result1 = extractJumpEvents(state, timestamps);
   if (result1.hops.length !== 1) {
     throw new Error('GCT 200ms should pass default bounds');
   }
 
   // Custom bounds (min: 300, max: 400) → should fail
-  const result2 = extractJumpEvents(state, frames, {
+  const result2 = extractJumpEvents(state, timestamps, {
     minGctMs: 300,
     maxGctMs: 400,
   });
@@ -279,18 +274,9 @@ function testCustomBounds(): void {
 function testMixedValidInvalid(): void {
   // Two hops: one valid (GCT 200), one too short (GCT 30)
   const state: (0 | 1)[] = [0, 1, 1, 0, 0, 1, 0, 0];
-  const frames = [
-    { tMs: 0 },
-    { tMs: 100 },
-    { tMs: 300 },
-    { tMs: 500 },
-    { tMs: 600 },
-    { tMs: 630 }, // GCT too short
-    { tMs: 700 },
-    { tMs: 800 },
-  ];
+  const timestamps = [0, 100, 300, 500, 600, 630, 700, 800];
 
-  const result = extractJumpEvents(state, frames, {
+  const result = extractJumpEvents(state, timestamps, {
     minGctMs: 50,
     maxGctMs: 450,
   });
@@ -313,9 +299,9 @@ function testTakeoffBeforeLanding(): void {
   // Starts with state=1 (in contact), then transitions to 0 (takeoff)
   // This is a takeoff without a preceding landing
   const state: (0 | 1)[] = [1, 1, 0, 0, 1, 1, 0];
-  const frames = state.map((_, i) => ({ tMs: i * 100 }));
+  const timestamps = state.map((_, i) => i * 100);
 
-  const result = extractJumpEvents(state, frames);
+  const result = extractJumpEvents(state, timestamps);
 
   // Should have: 1 takeoff (at 200), 1 landing (at 400), 0 hops
   // Because takeoff at 200 comes before landing at 400

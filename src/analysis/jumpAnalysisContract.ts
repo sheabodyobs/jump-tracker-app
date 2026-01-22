@@ -181,6 +181,7 @@ export type JumpAnalysis = {
       contactConfidence?: number;
       eventConfidence?: number;
       rejectionReasons?: string[];
+      roiSource?: 'foot_patch' | 'ground_inference' | 'legacy';
     };
   };
 

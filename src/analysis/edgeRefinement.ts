@@ -105,10 +105,26 @@ function refineByMaxPositiveDerivative(
   windowStart: number,
   windowEnd: number
 ): EdgeRefinementResult {
-  let maxDerivative = 0;
-  let maxIdx = transitionFrameIndex;
+  const lastIndex = Math.min(smoothedScores.length, timestamps.length) - 1;
+  if (lastIndex <= 0) {
+    const safeIndex = Math.max(0, Math.min(transitionFrameIndex, lastIndex));
+    return {
+      transitionFrameIndex: safeIndex,
+      refinedFrameIndex: safeIndex,
+      refinedTMs: timestamps[safeIndex] ?? 0,
+      subFrameOffsetMs: null,
+      method: 'max_derivative',
+      confidence: 0,
+    };
+  }
 
-  for (let i = windowStart; i < windowEnd; i++) {
+  let maxDerivative = 0;
+  let maxIdx = Math.max(0, Math.min(transitionFrameIndex, lastIndex - 1));
+
+  const safeWindowEnd = Math.min(windowEnd, lastIndex - 1);
+  const safeWindowStart = Math.max(0, Math.min(windowStart, safeWindowEnd));
+
+  for (let i = safeWindowStart; i <= safeWindowEnd; i++) {
     const derivative = smoothedScores[i + 1] - smoothedScores[i];
     if (derivative > maxDerivative) {
       maxDerivative = derivative;
@@ -117,11 +133,12 @@ function refineByMaxPositiveDerivative(
   }
 
   // Sub-frame interpolation: if maxIdx < windowEnd, interpolate to find exact crossing
+  const nextIdx = Math.min(maxIdx + 1, lastIndex);
   const subFrameOffsetMs = interpolateSubFrameOffset(
     smoothedScores[maxIdx],
-    smoothedScores[maxIdx + 1],
+    smoothedScores[nextIdx],
     timestamps[maxIdx],
-    timestamps[maxIdx + 1],
+    timestamps[nextIdx],
     0.5,
     'rising'
   );
@@ -151,10 +168,26 @@ function refineByMaxNegativeDerivative(
   windowStart: number,
   windowEnd: number
 ): EdgeRefinementResult {
-  let minDerivative = 0;
-  let minIdx = transitionFrameIndex;
+  const lastIndex = Math.min(smoothedScores.length, timestamps.length) - 1;
+  if (lastIndex <= 0) {
+    const safeIndex = Math.max(0, Math.min(transitionFrameIndex, lastIndex));
+    return {
+      transitionFrameIndex: safeIndex,
+      refinedFrameIndex: safeIndex,
+      refinedTMs: timestamps[safeIndex] ?? 0,
+      subFrameOffsetMs: null,
+      method: 'max_derivative',
+      confidence: 0,
+    };
+  }
 
-  for (let i = windowStart; i < windowEnd; i++) {
+  let minDerivative = 0;
+  let minIdx = Math.max(0, Math.min(transitionFrameIndex, lastIndex - 1));
+
+  const safeWindowEnd = Math.min(windowEnd, lastIndex - 1);
+  const safeWindowStart = Math.max(0, Math.min(windowStart, safeWindowEnd));
+
+  for (let i = safeWindowStart; i <= safeWindowEnd; i++) {
     const derivative = smoothedScores[i + 1] - smoothedScores[i];
     if (derivative < minDerivative) {
       minDerivative = derivative;
@@ -163,11 +196,12 @@ function refineByMaxNegativeDerivative(
   }
 
   // Sub-frame interpolation: if minIdx < windowEnd, interpolate to find exact crossing
+  const nextIdx = Math.min(minIdx + 1, lastIndex);
   const subFrameOffsetMs = interpolateSubFrameOffset(
     smoothedScores[minIdx],
-    smoothedScores[minIdx + 1],
+    smoothedScores[nextIdx],
     timestamps[minIdx],
-    timestamps[minIdx + 1],
+    timestamps[nextIdx],
     0.5,
     'falling'
   );

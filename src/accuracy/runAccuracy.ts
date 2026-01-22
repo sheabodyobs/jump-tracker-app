@@ -46,7 +46,7 @@ function median(values: number[]): number {
  * Returns array of { auto, label, errorMs } for matched events
  * and { unmatched: 'auto' | 'label' } for unmatched
  */
-function matchEvents(
+export function matchEvents(
   autoTimes: number[],
   labelTimes: number[],
   toleranceMs: number
@@ -66,7 +66,8 @@ function matchEvents(
   const usedAuto = new Set<number>();
 
   // For each auto event, find nearest label within tolerance
-  for (const autoT of autoTimes) {
+  for (let autoIdx = 0; autoIdx < autoTimes.length; autoIdx++) {
+    const autoT = autoTimes[autoIdx];
     let bestLabel: number | null = null;
     let bestDist = toleranceMs + 1;
 
@@ -81,14 +82,14 @@ function matchEvents(
 
     if (bestLabel !== null && bestDist <= toleranceMs) {
       usedLabels.add(bestLabel);
-      usedAuto.add(autoTimes.indexOf(autoT));
+      usedAuto.add(autoIdx);
       matches.push({
         auto: autoT,
         label: labelTimes[bestLabel],
         errorMs: autoT - labelTimes[bestLabel],
       });
     } else {
-      usedAuto.add(autoTimes.indexOf(autoT));
+      usedAuto.add(autoIdx);
       matches.push({ auto: autoT, unmatched: 'auto' });
     }
   }

@@ -41,6 +41,11 @@ export interface JumpEvents {
   diagnostics: {
     rejectedTransitions: number;
     reasons: Record<string, number>;
+    rejection?: {
+      code: string;
+      stage: 'event_extraction';
+      reason: string;
+    };
   };
 }
 
@@ -337,14 +342,15 @@ function computeConfidence(
  * Extract jump events from contact state, with edge refinement and plausibility bounds.
  *
  * @param state Binary contact state (0=not touching, 1=touching)
- * @param frames Frame metadata including timestamps
- * @param smoothedScores Optional smoothed contact confidence scores [0..1] for edge refinement
+ * @param state Binary contact state (0=not touching, 1=touching)
+ * @param timestampsMs Frame timestamps in milliseconds (must match state length)
  * @param options Event extractor configuration
+ * @param smoothedScores Optional smoothed contact confidence scores [0..1] for edge refinement
  * @returns JumpEvents with landings, takeoffs, hops, and diagnostics
  */
 export function extractJumpEvents(
   state: (0 | 1)[],
-  frames: { tMs: number }[],
+  timestampsMs: number[],
   options?: EventExtractorOptions,
   smoothedScores?: number[]
 ): JumpEvents {
@@ -359,7 +365,32 @@ export function extractJumpEvents(
     refinementWindowFrames: options?.refinementWindowFrames ?? 3,
   };
 
-  if (state.length === 0 || frames.length === 0) {
+  if (state.length !== timestampsMs.length) {
+    return {
+      landings: [],
+      takeoffs: [],
+      hops: [],
+      summary: {
+        medianGctMs: null,
+        medianFlightMs: null,
+        p95GctMs: null,
+        p95FlightMs: null,
+        hopCount: 0,
+      },
+      confidence: 0,
+      diagnostics: {
+        rejectedTransitions: 0,
+        reasons: { state_timestamp_mismatch: 1 },
+        rejection: {
+          code: 'INTERNAL',
+          stage: 'event_extraction',
+          reason: 'state/timestamp length mismatch',
+        },
+      },
+    };
+  }
+
+  if (state.length === 0 || timestampsMs.length === 0) {
     return {
       landings: [],
       takeoffs: [],
@@ -379,8 +410,7 @@ export function extractJumpEvents(
     };
   }
 
-  // Extract timestamps
-  const timestamps = frames.map((f) => f.tMs);
+  const timestamps = timestampsMs;
 
   // 1. Find all transitions
   const transitions = findTransitions(state, timestamps);
@@ -417,7 +447,38 @@ export function extractJumpEvents(
     opts
   );
 
-  // 6. Compute summary statistics
+  // 6. Validate hop ordering invariant
+  const invalidHopOrder = pairedHops.some((hop) => !(hop.landingMs < hop.takeoffMs));
+  if (invalidHopOrder) {
+    return {
+      landings,
+      takeoffs,
+      hops: [],
+      summary: {
+        medianGctMs: null,
+        medianFlightMs: null,
+        p95GctMs: null,
+        p95FlightMs: null,
+        hopCount: 0,
+      },
+      confidence: 0,
+      diagnostics: {
+        rejectedTransitions: rejectedCount,
+        reasons: {
+          ...pairingReasons,
+          ...boundReasons,
+          invalid_hop_order: 1,
+        },
+        rejection: {
+          code: 'INTERNAL',
+          stage: 'event_extraction',
+          reason: 'invalid hop ordering',
+        },
+      },
+    };
+  }
+
+  // 7. Compute summary statistics
   const gctValues = validHops.map((h) => h.gctMs);
   const flightValues = validHops
     .map((h) => h.flightMs)
@@ -431,10 +492,10 @@ export function extractJumpEvents(
     hopCount: validHops.length,
   };
 
-  // 7. Compute confidence
+  // 8. Compute confidence
   const confidence = computeConfidence(validHops.length, rejectedCount, transitions.length);
 
-  // 8. Combine diagnostics
+  // 9. Combine diagnostics
   const diagnostics = {
     rejectedTransitions: rejectedCount,
     reasons: {
