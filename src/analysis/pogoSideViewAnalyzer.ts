@@ -644,7 +644,6 @@ function analyzeContactFromRoi(
   const edgeValues = rawSamples.map((s) => s.edgeEnergy);
   const motionValues = rawSamples.map((s) => s.motionEnergy);
   const bottomValues = rawSamples.map((s) => s.bottomBandEnergy);
-
   const edgeMin = edgeValues.length ? Math.min(...edgeValues) : 0;
   const edgeMax = edgeValues.length ? Math.max(...edgeValues) : 0;
   const motionMin = motionValues.length ? Math.min(...motionValues) : 0;
@@ -785,7 +784,6 @@ export async function analyzePogoSideView(
       : toExtractedFrames(pixelFrames);
 
   const { groundLine, roi, debug } = computeGroundAndRoi(extractedFrames, config);
-
   const { analyzedFrames, contactSignals, rawSamples, stats } = analyzeContactFromRoi(
     pixelFrames,
     groundLine.y,
