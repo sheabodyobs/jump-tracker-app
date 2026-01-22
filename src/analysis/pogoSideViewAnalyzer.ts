@@ -156,9 +156,9 @@ function seededRandom(seed: number): () => number {
 
 function hashString(input: string): number {
   let hash = 0;
+  const mod = 2147483647;
   for (let i = 0; i < input.length; i += 1) {
-    hash = (hash << 5) - hash + input.charCodeAt(i);
-    hash |= 0;
+    hash = (hash * 31 + input.charCodeAt(i)) % mod;
   }
   return Math.abs(hash);
 }
@@ -255,6 +255,11 @@ async function sampleFramesForAnalysis(uri: string): Promise<{
   measurementStatus: MeasurementStatus;
   nominalFps?: number;
 }> {
+  const allowSynthetic =
+    typeof process !== "undefined" &&
+    typeof process.env !== "undefined" &&
+    process.env.NODE_ENV === "test";
+
   if (Platform.OS === "ios") {
     const initialTimestamps = buildEvenTimestamps(DEFAULT_SAMPLE_WINDOW_MS, MAX_FRAMES);
     const initialBatch = await iosAvFoundationFrameProvider.sampleFrames(uri, initialTimestamps, {
@@ -283,7 +288,7 @@ async function sampleFramesForAnalysis(uri: string): Promise<{
     }
 
     return {
-      pixelFrames: generateSyntheticFrames(uri),
+      pixelFrames: allowSynthetic ? generateSyntheticFrames(uri) : [],
       batch,
       measurementStatus: "synthetic_placeholder",
       nominalFps: batch.nominalFps,
@@ -298,7 +303,7 @@ async function sampleFramesForAnalysis(uri: string): Promise<{
   }
 
   return {
-    pixelFrames: generateSyntheticFrames(uri),
+    pixelFrames: allowSynthetic ? generateSyntheticFrames(uri) : [],
     measurementStatus: "synthetic_placeholder",
   };
 }

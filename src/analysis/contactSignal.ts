@@ -22,15 +22,29 @@ export interface ContactSignal {
       | { type: 'medianMAD'; median: number; mad: number }
       | { type: 'percentile'; min: number; max: number };
     chatterCount: number;
+    smoothingMode: 'causal' | 'zero_phase';
+    safeguards: {
+      dynamicRange: number;
+      minDynamicRange: number;
+      framesAboveEnter: number;
+      framesBelowExit: number;
+      minFramesAboveEnter: number;
+      minFramesBelowExit: number;
+      passed: boolean;
+    };
   };
 }
 
 export interface ContactSignalOptions {
   emaAlpha?: number; // 0.1 to 0.5; default 0.2
+  smoothingMode?: 'causal' | 'zero_phase'; // default 'causal'
   normMethod?: 'medianMAD' | 'percentile'; // default 'medianMAD'
   enterThreshold?: number; // 0..1; default 0.3
   exitThreshold?: number; // 0..1; default 0.15
   minStateFrames?: number; // dwell frames; default 2
+  minDynamicRange?: number; // default 0.1
+  minFramesAboveEnter?: number; // default 2
+  minFramesBelowExit?: number; // default 2
 }
 
 /**
@@ -166,6 +180,7 @@ function applyHysteresis(
   exitThreshold: number,
   minStateFrames: number
 ): { state: (0 | 1)[]; chatterCount: number } {
+  const EPS = 1e-6;
   if (smoothedScores.length === 0) {
     return { state: [], chatterCount: 0 };
   }
@@ -181,7 +196,7 @@ function applyHysteresis(
     // Transition logic
     if (currentState === 0) {
       // In flight: check if we enter contact
-      if (score >= enterThreshold) {
+      if (score >= enterThreshold - EPS) {
         // Tentatively transition to contact
         currentState = 1;
         stateFrameCount = 1;
@@ -190,7 +205,7 @@ function applyHysteresis(
       }
     } else {
       // In contact: check if we exit
-      if (score < exitThreshold) {
+      if (score < exitThreshold + EPS) {
         // Tentatively transition to flight
         currentState = 0;
         stateFrameCount = 1;
@@ -246,10 +261,14 @@ export function computeContactSignal(
 ): ContactSignal {
   // Default options
   const emaAlpha = options?.emaAlpha ?? 0.2;
+  const smoothingMode = options?.smoothingMode ?? 'causal';
   const normMethod = options?.normMethod ?? 'medianMAD';
   const enterThreshold = options?.enterThreshold ?? 0.3;
   const exitThreshold = options?.exitThreshold ?? 0.15;
   const minStateFrames = options?.minStateFrames ?? 2;
+  const minDynamicRange = options?.minDynamicRange ?? 0.1;
+  const minFramesAboveEnter = options?.minFramesAboveEnter ?? 2;
+  const minFramesBelowExit = options?.minFramesBelowExit ?? 2;
 
   // 1. Compute raw motion energy inside ROI
   const rawScores = computeMotionEnergyInRoi(frames, roi);
@@ -261,7 +280,10 @@ export function computeContactSignal(
   );
 
   // 3. Apply EMA smoothing
-  const smoothedScores = applyEmaSmoothing(normalizedScores, emaAlpha);
+  const smoothedScores =
+    smoothingMode === 'zero_phase'
+      ? applyEmaSmoothing([...applyEmaSmoothing(normalizedScores, emaAlpha)].reverse(), emaAlpha).reverse()
+      : applyEmaSmoothing(normalizedScores, emaAlpha);
 
   // 4. Apply hysteresis and dwell time
   const { state, chatterCount } = applyHysteresis(
@@ -271,8 +293,21 @@ export function computeContactSignal(
     minStateFrames
   );
 
-  // 5. Compute confidence
-  const confidence = computeConfidence(enterThreshold, exitThreshold, smoothedScores);
+  // 5. Safeguards (reject if signal lacks minimum structure)
+  const dynamicRange = smoothedScores.length
+    ? Math.max(...smoothedScores) - Math.min(...smoothedScores)
+    : 0;
+  const framesAboveEnter = smoothedScores.filter((v) => v >= enterThreshold - 1e-6).length;
+  const framesBelowExit = smoothedScores.filter((v) => v <= exitThreshold + 1e-6).length;
+  const safeguardsPassed =
+    dynamicRange >= minDynamicRange &&
+    framesAboveEnter >= minFramesAboveEnter &&
+    framesBelowExit >= minFramesBelowExit;
+
+  // 6. Compute confidence
+  const confidence = safeguardsPassed
+    ? computeConfidence(enterThreshold, exitThreshold, smoothedScores)
+    : 0;
 
   return {
     score: rawScores,
@@ -283,6 +318,16 @@ export function computeContactSignal(
     diagnostics: {
       norm: normDiagnostics,
       chatterCount,
+      smoothingMode,
+      safeguards: {
+        dynamicRange,
+        minDynamicRange,
+        framesAboveEnter,
+        framesBelowExit,
+        minFramesAboveEnter,
+        minFramesBelowExit,
+        passed: safeguardsPassed,
+      },
     },
   };
 }
