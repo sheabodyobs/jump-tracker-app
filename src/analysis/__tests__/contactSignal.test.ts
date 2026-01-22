@@ -1,5 +1,33 @@
 import { computeContactSignal, RawFrame } from '../contactSignal';
 
+function framesFromEnergies(energies: number[]): RawFrame[] {
+  const frames: RawFrame[] = [];
+  const width = 1;
+  const height = 1;
+  let value = 128;
+
+  for (let i = 0; i < energies.length; i++) {
+    if (i > 0) {
+      const delta = Math.max(0, Math.min(255, energies[i]));
+      if (value + delta > 250) {
+        value -= delta;
+      } else if (value - delta < 5) {
+        value += delta;
+      } else {
+        value += delta;
+      }
+    }
+
+    frames.push({
+      data: new Uint8ClampedArray([value]),
+      width,
+      height,
+    });
+  }
+
+  return frames;
+}
+
 /**
  * Generate static grayscale frame with optional noise.
  */
@@ -237,7 +265,134 @@ async function testInsufficientFrames(): Promise<void> {
 }
 
 /**
- * Test 4: Percentile normalization method.
+ * Test 4: Safeguards should reject flat signals.
+ */
+async function testSafeguardsRejectFlatSignal(): Promise<void> {
+  const frames = framesFromEnergies([0, 0, 0, 0, 0, 0]);
+  const roi = { x: 0, y: 0, w: 1, h: 1 };
+
+  const result = computeContactSignal(frames, roi, {
+    normMethod: 'percentile',
+    enterThreshold: 0.6,
+    exitThreshold: 0.4,
+    minDynamicRange: 0.05,
+    minFramesAboveEnter: 2,
+    minFramesBelowExit: 2,
+  });
+
+  if (result.confidence !== 0) {
+    throw new Error(`Expected confidence 0 for flat signal, got ${result.confidence}`);
+  }
+
+  console.log('✓ testSafeguardsRejectFlatSignal PASSED');
+}
+
+/**
+ * Test 5: Dynamic range below minDynamicRange should zero confidence.
+ */
+async function testSafeguardsLowDynamicRange(): Promise<void> {
+  const frames = framesFromEnergies([0, 0, 0, 5, 0, 0]);
+  const roi = { x: 0, y: 0, w: 1, h: 1 };
+
+  const result = computeContactSignal(frames, roi, {
+    normMethod: 'percentile',
+    enterThreshold: 0.1,
+    exitThreshold: 0.05,
+    minDynamicRange: 0.25,
+    minFramesAboveEnter: 1,
+    minFramesBelowExit: 1,
+  });
+
+  if (result.confidence !== 0) {
+    throw new Error(`Expected confidence 0 for low dynamic range, got ${result.confidence}`);
+  }
+
+  console.log('✓ testSafeguardsLowDynamicRange PASSED');
+}
+
+/**
+ * Test 6: Insufficient frames above enter threshold should zero confidence.
+ */
+async function testSafeguardsInsufficientAboveEnter(): Promise<void> {
+  const frames = framesFromEnergies([0, 0, 0, 100, 0, 0]);
+  const roi = { x: 0, y: 0, w: 1, h: 1 };
+
+  const result = computeContactSignal(frames, roi, {
+    normMethod: 'percentile',
+    emaAlpha: 0.5,
+    enterThreshold: 0.4,
+    exitThreshold: 0.2,
+    minDynamicRange: 0.1,
+    minFramesAboveEnter: 2,
+    minFramesBelowExit: 2,
+  });
+
+  if (result.confidence !== 0) {
+    throw new Error(`Expected confidence 0 for insufficient above-enter frames, got ${result.confidence}`);
+  }
+
+  console.log('✓ testSafeguardsInsufficientAboveEnter PASSED');
+}
+
+/**
+ * Test 7: Insufficient frames below exit threshold should zero confidence.
+ */
+async function testSafeguardsInsufficientBelowExit(): Promise<void> {
+  const frames = framesFromEnergies([0, 100, 100, 100, 100]);
+  const roi = { x: 0, y: 0, w: 1, h: 1 };
+
+  const result = computeContactSignal(frames, roi, {
+    normMethod: 'percentile',
+    emaAlpha: 0.5,
+    enterThreshold: 0.6,
+    exitThreshold: 0.4,
+    minDynamicRange: 0.1,
+    minFramesAboveEnter: 2,
+    minFramesBelowExit: 2,
+  });
+
+  if (result.confidence !== 0) {
+    throw new Error(`Expected confidence 0 for insufficient below-exit frames, got ${result.confidence}`);
+  }
+
+  console.log('✓ testSafeguardsInsufficientBelowExit PASSED');
+}
+
+/**
+ * Test 8: Valid step-like signal should yield confidence > 0.
+ */
+async function testSafeguardsValidStepSignal(): Promise<void> {
+  const frames = framesFromEnergies([0, 0, 0, 100, 100, 100, 0, 0, 0]);
+  const roi = { x: 0, y: 0, w: 1, h: 1 };
+
+  const result = computeContactSignal(frames, roi, {
+    normMethod: 'percentile',
+    emaAlpha: 0.5,
+    enterThreshold: 0.6,
+    exitThreshold: 0.3,
+    minDynamicRange: 0.1,
+    minFramesAboveEnter: 2,
+    minFramesBelowExit: 2,
+    minStateFrames: 2,
+  });
+
+  if (result.confidence <= 0) {
+    throw new Error(`Expected confidence > 0 for valid step signal, got ${result.confidence}`);
+  }
+
+  let transitionCount = 0;
+  for (let i = 1; i < result.state.length; i++) {
+    if (result.state[i] !== result.state[i - 1]) transitionCount++;
+  }
+  if (transitionCount > 2) {
+    throw new Error(`Unexpected chatter: transitionCount=${transitionCount}`);
+  }
+
+  console.log('✓ testSafeguardsValidStepSignal PASSED');
+}
+
+/**
+ * Test 9: Percentile normalization method.
  */
 async function testPercentileNormalization(): Promise<void> {
   const width = 320;
@@ -271,7 +426,7 @@ async function testPercentileNormalization(): Promise<void> {
 }
 
 /**
- * Test 5: Hysteresis threshold gap prevents jitter.
+ * Test 10: Hysteresis threshold gap prevents jitter.
  */
 async function testHysteresisThresholdGap(): Promise<void> {
   const width = 320;
@@ -309,7 +464,7 @@ async function testHysteresisThresholdGap(): Promise<void> {
 }
 
 /**
- * Test 6: Smoothed scores should be in [0..1].
+ * Test 11: Smoothed scores should be in [0..1].
  */
 async function testSmoothedScoresInRange(): Promise<void> {
   const width = 320;
@@ -333,7 +488,7 @@ async function testSmoothedScoresInRange(): Promise<void> {
 }
 
 /**
- * Test 7: Raw scores should be non-negative.
+ * Test 12: Raw scores should be non-negative.
  */
 async function testRawScoresNonNegative(): Promise<void> {
   const width = 320;
@@ -356,7 +511,7 @@ async function testRawScoresNonNegative(): Promise<void> {
 }
 
 /**
- * Test 8: Output arrays should have consistent length with input frames.
+ * Test 13: Output arrays should have consistent length with input frames.
  */
 async function testOutputArrayLengths(): Promise<void> {
   const width = 320;
@@ -393,6 +548,11 @@ export async function runAllContactSignalTests(): Promise<void> {
     await testCleanAlternatingContactFlight();
     await testNoisyScoreChatterPrevention();
     await testInsufficientFrames();
+    await testSafeguardsRejectFlatSignal();
+    await testSafeguardsLowDynamicRange();
+    await testSafeguardsInsufficientAboveEnter();
+    await testSafeguardsInsufficientBelowExit();
+    await testSafeguardsValidStepSignal();
     await testPercentileNormalization();
     await testHysteresisThresholdGap();
     await testSmoothedScoresInRange();

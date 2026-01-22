@@ -231,7 +231,7 @@ function computeLineEndpoints(
   const intersections: Point2D[] = [];
 
   // Top edge (y=0)
-  if (Math.abs(sin) > 1e-6 && Math.abs(cos) > 1e-6) {
+  if (Math.abs(cos) > 1e-6) {
     const x = (rho - 0 * sin) / cos;
     if (x >= 0 && x <= width) {
       intersections.push({ x, y: 0 });
@@ -239,7 +239,7 @@ function computeLineEndpoints(
   }
 
   // Bottom edge (y=height-1)
-  if (Math.abs(sin) > 1e-6 && Math.abs(cos) > 1e-6) {
+  if (Math.abs(cos) > 1e-6) {
     const x = (rho - (height - 1) * sin) / cos;
     if (x >= 0 && x <= width) {
       intersections.push({ x, y: height - 1 });
@@ -247,7 +247,7 @@ function computeLineEndpoints(
   }
 
   // Left edge (x=0)
-  if (Math.abs(cos) > 1e-6 && Math.abs(sin) > 1e-6) {
+  if (Math.abs(sin) > 1e-6) {
     const y = (rho - 0 * cos) / sin;
     if (y >= 0 && y <= height) {
       intersections.push({ x: 0, y });
@@ -255,7 +255,7 @@ function computeLineEndpoints(
   }
 
   // Right edge (x=width-1)
-  if (Math.abs(cos) > 1e-6 && Math.abs(sin) > 1e-6) {
+  if (Math.abs(sin) > 1e-6) {
     const y = (rho - (width - 1) * cos) / sin;
     if (y >= 0 && y <= height) {
       intersections.push({ x: width - 1, y });
