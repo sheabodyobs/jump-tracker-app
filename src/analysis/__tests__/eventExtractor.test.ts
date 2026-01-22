@@ -228,12 +228,12 @@ function testIncompleteLastHop(): void {
 
   const result = extractJumpEvents(state, timestamps);
 
-  if (result.hops.length !== 1) {
-    throw new Error(`Expected 1 hop with null flightMs`);
+  if (result.hops.length !== 0) {
+    throw new Error(`Expected incomplete hop to be rejected`);
   }
 
-  if (result.hops[0].flightMs !== null) {
-    throw new Error(`Expected null flightMs for incomplete hop`);
+  if (!result.diagnostics.reasons['incomplete_hop']) {
+    throw new Error('Expected incomplete_hop reason');
   }
 
   if (result.summary.medianFlightMs !== null) {

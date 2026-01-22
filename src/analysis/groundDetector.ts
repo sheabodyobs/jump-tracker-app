@@ -206,7 +206,10 @@ function houghTransform(
       theta,
       rho,
       score: cand.score,
-      endpoints,
+      endpoints: endpoints ?? [
+        { x: 0, y: 0 },
+        { x: width - 1, y: height - 1 },
+      ],
     };
   });
 
@@ -221,14 +224,14 @@ function computeLineEndpoints(
   rho: number,
   width: number,
   height: number
-): [Point2D, Point2D] {
+): [Point2D, Point2D] | null {
   const cos = Math.cos(theta);
   const sin = Math.sin(theta);
 
   const intersections: Point2D[] = [];
 
   // Top edge (y=0)
-  if (Math.abs(sin) > 1e-6) {
+  if (Math.abs(sin) > 1e-6 && Math.abs(cos) > 1e-6) {
     const x = (rho - 0 * sin) / cos;
     if (x >= 0 && x <= width) {
       intersections.push({ x, y: 0 });
@@ -236,7 +239,7 @@ function computeLineEndpoints(
   }
 
   // Bottom edge (y=height-1)
-  if (Math.abs(sin) > 1e-6) {
+  if (Math.abs(sin) > 1e-6 && Math.abs(cos) > 1e-6) {
     const x = (rho - (height - 1) * sin) / cos;
     if (x >= 0 && x <= width) {
       intersections.push({ x, y: height - 1 });
@@ -244,7 +247,7 @@ function computeLineEndpoints(
   }
 
   // Left edge (x=0)
-  if (Math.abs(cos) > 1e-6) {
+  if (Math.abs(cos) > 1e-6 && Math.abs(sin) > 1e-6) {
     const y = (rho - 0 * cos) / sin;
     if (y >= 0 && y <= height) {
       intersections.push({ x: 0, y });
@@ -252,14 +255,14 @@ function computeLineEndpoints(
   }
 
   // Right edge (x=width-1)
-  if (Math.abs(cos) > 1e-6) {
+  if (Math.abs(cos) > 1e-6 && Math.abs(sin) > 1e-6) {
     const y = (rho - (width - 1) * cos) / sin;
     if (y >= 0 && y <= height) {
       intersections.push({ x: width - 1, y });
     }
   }
 
-  // Return two endpoints; if fewer than 2, use frame corners
+  // Return two endpoints; if fewer than 2, report failure
   if (intersections.length >= 2) {
     return [
       intersections[0],
@@ -267,10 +270,7 @@ function computeLineEndpoints(
     ] as [Point2D, Point2D];
   }
 
-  return [
-    { x: 0, y: 0 },
-    { x: width - 1, y: height - 1 },
-  ];
+  return null;
 }
 
 /**
@@ -514,6 +514,20 @@ export function detectGround(frames: Array<{
     // Compute visual line endpoints for rendering
     const firstFrame = frames[0];
     const endpoints = computeLineEndpoints(theta, rho, firstFrame.width, firstFrame.height);
+    if (!endpoints) {
+      return {
+        detected: false,
+        confidence: 0,
+        theta: null,
+        rho: null,
+        line: null,
+        method: "none",
+        diagnostics: {
+          ...diagnostics,
+          stageSummary: "Stage B: Endpoint computation failed",
+        },
+      };
+    }
 
     return {
       detected: confidence >= 0.3, // Detection threshold
