@@ -11,6 +11,7 @@ import {
 import { analyzeVideo } from "../../src/analysis/analyzeVideo";
 import { MOCK_ANALYSIS } from "../../src/analysis/mockAnalysis";
 import { analyzePogoSideView } from "../../src/analysis/pogoSideViewAnalyzer";
+import DebugOverlay from "../../src/components/DebugOverlay";
 import { selfTestExtractFrames } from "../../src/video/selfTestExtractFrames";
 
 /**
@@ -56,6 +57,8 @@ const HARD_FALLBACK: JumpAnalysis = {
   },
   aiSummary: { text: "", tags: [] },
 };
+
+const CONFIDENCE_THRESHOLD = 0.6;
 
 function coerceAnalysis(a: unknown): JumpAnalysis {
   if (!a || typeof a !== "object") return HARD_FALLBACK;
@@ -232,6 +235,19 @@ export default function HomeScreen() {
     return value.toString();
   };
 
+  // Confidence gate: metrics only render when analysis is complete and confidence is high.
+  const metricsVisible = isComplete && overallConfidence >= CONFIDENCE_THRESHOLD;
+  const overlayRoi = safe.analysisDebug?.groundRoi?.roi ?? null;
+  const overlayEvents = [
+    { type: "takeoff" as const, event: safe.events?.takeoff ?? null },
+    { type: "landing" as const, event: safe.events?.landing ?? null },
+  ];
+  const contactScore = safe.analysisDebug?.groundRoi?.rawSamples?.map((s) => s.contactScore);
+
+  // Debug overlay uses a fixed frame size for visualization (no video surface available).
+  const debugFrameWidth = 320;
+  const debugFrameHeight = 180;
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Jump Tracker</Text>
@@ -310,11 +326,40 @@ export default function HomeScreen() {
         </Text>
       </View>
 
+      <View style={styles.card}>
+        <View style={styles.rowBetween}>
+          <Text style={styles.sectionTitle}>Debug overlay</Text>
+          <Pressable
+            style={[styles.button, styles.buttonSecondary, showOverlay && styles.buttonActive]}
+            onPress={() => setShowOverlay((prev) => !prev)}
+          >
+            <Text style={styles.buttonText}>Debug overlay</Text>
+          </Pressable>
+        </View>
+
+        {/* Debug overlay helps diagnose ground/ROI/event alignment without changing analysis logic. */}
+        {showOverlay ? (
+          <View style={styles.debugFrame}>
+            <DebugOverlay
+              frameWidth={debugFrameWidth}
+              frameHeight={debugFrameHeight}
+              ground={safe.groundSummary ?? null}
+              roi={overlayRoi}
+              events={overlayEvents}
+              contactScore={contactScore}
+              confidence={overallConfidence}
+            />
+          </View>
+        ) : (
+          <Text style={styles.muted}>Overlay is off.</Text>
+        )}
+      </View>
+
       {/* Invariant:
           - render metrics ONLY when status === "complete"
           - otherwise show explanation + notes
       */}
-      {isComplete && isRealMeasurement ? (
+      {metricsVisible ? (
         <>
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Primary</Text>
@@ -381,11 +426,13 @@ export default function HomeScreen() {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Metrics hidden</Text>
           <Text style={styles.value}>
-            {!isRealMeasurement
+            {!isComplete
+              ? "Analysis not complete yet."
+              : overallConfidence < CONFIDENCE_THRESHOLD
+              ? "Low confidence — improve angle, lighting, or framing"
+              : !isRealMeasurement
               ? "Simulated output: measurements unavailable."
-              : safe.status === "error"
-              ? "Insufficient confidence to report metrics."
-              : "Analysis not complete yet."}
+              : "Metrics unavailable."}
           </Text>
           <Text style={styles.muted}>{notes.length ? notes.join("\n") : ""}</Text>
         </View>
@@ -429,19 +476,6 @@ export default function HomeScreen() {
             </Pressable>
           ))}
         </View>
-        <Pressable
-          style={[styles.button, styles.buttonSecondary]}
-          onPress={() => setShowOverlay((prev) => !prev)}
-        >
-          <Text style={styles.buttonText}>
-            {showOverlay ? "Hide debug overlay" : "Show debug overlay"}
-          </Text>
-        </Pressable>
-        {showOverlay && (
-          <Text style={styles.muted}>
-            Overlay preview is unavailable without react-native-svg. Numeric values shown below.
-          </Text>
-        )}
         <Text style={styles.muted}>{frameTestReport || "—"}</Text>
       </View>
     </View>
@@ -471,6 +505,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sectionTitle: { fontSize: 16, fontWeight: "700" },
+  rowBetween: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  },
+  debugFrame: {
+    width: 320,
+    height: 180,
+    backgroundColor: "#0f172a",
+    borderRadius: 8,
+    overflow: "hidden",
+    position: "relative",
+  },
   row: { fontSize: 14 },
   value: { fontSize: 14, fontWeight: "600" },
   muted: { fontSize: 12, opacity: 0.7 },

@@ -282,6 +282,9 @@ export function computeContactSignal(
   // 3. Apply EMA smoothing
   const smoothedScores =
     smoothingMode === 'zero_phase'
+      // Approximate zero-phase-like technique: EMA is an asymmetric IIR filter,
+      // so this is not true filtfilt. Intent is to reduce phase delay, not
+      // guarantee mathematically exact zero-phase response.
       ? applyEmaSmoothing([...applyEmaSmoothing(normalizedScores, emaAlpha)].reverse(), emaAlpha).reverse()
       : applyEmaSmoothing(normalizedScores, emaAlpha);
 
