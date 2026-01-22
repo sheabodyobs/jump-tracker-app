@@ -1,0 +1,41 @@
+#!/bin/bash
+# ios-setup.sh - Helper script for setting up the native RoiGrayExtractor module
+
+# This script provides guidance for integrating the RoiGrayExtractor native module
+# into the iOS build.
+
+echo "═══════════════════════════════════════════════════════════════════"
+echo "iOS Native Module Setup: RoiGrayExtractor"
+echo "═══════════════════════════════════════════════════════════════════"
+echo ""
+echo "Files created:"
+echo "  ✓ ios/RoiGrayExtractor.swift   - Main implementation (AVFoundation)"
+echo "  ✓ ios/RoiGrayExtractor.m       - Objective-C bridge"
+echo ""
+
+echo "Next steps:"
+echo ""
+echo "1) Open Xcode project:"
+echo "   open ios/jumptrackerapp.xcworkspace"
+echo ""
+echo "2) Ensure the native files are added to the build target:"
+echo "   - In Xcode, verify RoiGrayExtractor.swift and .m are in:"
+echo "     Project → Target → Build Phases → Compile Sources"
+echo ""
+echo "3) If files are not listed, add them manually:"
+echo "   - Right-click project in Xcode"
+echo "   - Select 'Add Files to...'"
+echo "   - Navigate to ios/RoiGrayExtractor.swift and .m"
+echo "   - Ensure 'Copy items if needed' is checked"
+echo "   - Select the correct target"
+echo ""
+echo "4) Clean and rebuild:"
+echo "   xcodebuild clean -workspace ios/jumptrackerapp.xcworkspace -scheme jumptrackerapp"
+echo "   xcodebuild -workspace ios/jumptrackerapp.xcworkspace -scheme jumptrackerapp"
+echo ""
+echo "5) Test the module:"
+echo "   - Import and call selfTestExtractRoi() from JavaScript"
+echo "   - Check console logs for extraction results"
+echo ""
+echo "For more details, see docs/OFFLINE_EXTRACTION.md"
+echo "═══════════════════════════════════════════════════════════════════"

@@ -1,0 +1,76 @@
+{
+  "version": "0.1.0",
+  "description": "Golden dataset for offline pogo hop accuracy validation",
+  "fpsAssumption": 120,
+  "cases": [
+    {
+      "id": "pogo_tripod_good_01",
+      "uri": "file://./datasets/gct-golden/videos/pogo_tripod_good_01.mov",
+      "notes": "Good lighting, tripod view, clean double-bounce pogo",
+      "roi": {
+        "space": "normalized",
+        "x": 0.35,
+        "y": 0.55,
+        "width": 0.3,
+        "height": 0.35
+      },
+      "labels": {
+        "source": "manual-label-mode",
+        "toleranceMs": 50,
+        "landingsMs": [150, 450, 750],
+        "takeoffsMs": [300, 600, 900]
+      },
+      "expected": {
+        "shouldAccept": true,
+        "maxMedianGctErrMs": 15,
+        "maxP95GctErrMs": 40,
+        "maxMedianFlightErrMs": 20,
+        "maxP95FlightErrMs": 50
+      }
+    },
+    {
+      "id": "pogo_low_light_01",
+      "uri": "file://./datasets/gct-golden/videos/pogo_low_light_01.mov",
+      "notes": "Low light conditions - expected to reject",
+      "roi": {
+        "space": "normalized",
+        "x": 0.35,
+        "y": 0.55,
+        "width": 0.3,
+        "height": 0.35
+      },
+      "labels": {
+        "source": "manual-label-mode",
+        "toleranceMs": 50,
+        "landingsMs": [200, 500],
+        "takeoffsMs": [350, 700]
+      },
+      "expected": {
+        "shouldAccept": false,
+        "reason": "low_light"
+      }
+    },
+    {
+      "id": "pogo_camera_motion_01",
+      "uri": "file://./datasets/gct-golden/videos/pogo_camera_motion_01.mov",
+      "notes": "Shaky camera - expected to reject",
+      "roi": {
+        "space": "normalized",
+        "x": 0.35,
+        "y": 0.55,
+        "width": 0.3,
+        "height": 0.35
+      },
+      "labels": {
+        "source": "manual-label-mode",
+        "toleranceMs": 50,
+        "landingsMs": [175, 475],
+        "takeoffsMs": [325, 625]
+      },
+      "expected": {
+        "shouldAccept": false,
+        "reason": "camera_motion"
+      }
+    }
+  ]
+}
