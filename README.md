@@ -29,7 +29,12 @@ src/
   analysis/
     jumpAnalysisContract.ts  # Canonical JumpAnalysis schema
     mockAnalysis.ts          # Mock analysis output
-    analyzeVideo.ts          # Video analysis entry point (WIP)
+    analyzeVideo.ts          # Video analysis entry point
+    groundDetector.ts        # Camera-invariant ground detection
+  video/
+    iosAvFoundationFrameProvider.ts  # Full-frame video sampler
+    roiLumaExtractor.ts      # ROI-only pixel extraction (NEW)
+    FrameProvider.ts         # Frame provider contract
 Important rule:
 Only UI code lives in app/.
 All analysis logic and schemas live outside app/ to avoid routing issues.

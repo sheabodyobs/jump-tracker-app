@@ -71,6 +71,20 @@ export type GroundModel2D =
       a: number | null;
       b: number | null;
       confidence: number; // 0..1
+    }
+  | {
+      // Hough-detected line in polar coords (theta, rho) with temporal clustering.
+      type: "hough_polar";
+      theta: number | null; // radians [0, π)
+      rho: number | null; // pixels
+      line: { x1: number; y1: number; x2: number; y2: number } | null; // visual endpoints
+      confidence: number; // 0..1, explicit formula in groundDetector.ts
+      method: string; // "hough_temporal"
+      diagnostics?: {
+        stageSummary?: string;
+        clusterCount?: number;
+        selectedClusterPersistence?: number;
+      };
     };
 
 export type ContactProbability = {
@@ -99,6 +113,14 @@ export type FrameDerived = {
     kneeAngleDeg: number | null;
     kneeOverToeNorm: number | null;
   };
+};
+
+export type RawContactSample = {
+  tMs: number;
+  contactScore: number; // 0..1 after smoothing
+  edgeEnergy: number;
+  motionEnergy: number;
+  bottomBandEnergy: number;
 };
 
 export type AnalysisFrame = {
@@ -151,9 +173,23 @@ export type JumpAnalysis = {
       jointsTracked: boolean;
       contactDetected: boolean;
     };
+    // New: per-stage pipeline confidence (0..1) for debugging + UI hints
+    pipelineDebug?: {
+      groundConfidence?: number;
+      roiConfidence?: number;
+      footPatchConfidence?: number;
+      contactConfidence?: number;
+      eventConfidence?: number;
+      rejectionReasons?: string[];
+    };
   };
 
   aiSummary: { text: string; tags: string[] };
+
+  capture?: {
+    nominalFps?: number;
+    durationMs?: number;
+  };
 
   analysisDebug?: {
     groundRoi?: {
@@ -161,6 +197,65 @@ export type JumpAnalysis = {
       groundLine?: { y: number; method: "manual" | "auto_edge" | "auto_motion" };
       roi?: { x: number; y: number; w: number; h: number };
       scores?: Record<string, number>;
+      rawSamples?: RawContactSample[];
+    };
+    footPatch?: {
+      roi: { x: number; y: number; w: number; h: number };
+      footness: number;
+      stability: number;
+      confidence: number;
+      reasons: string[];
+      diagnostics: any;
+    };
+    lowerBody?: {
+      notes: string[];
+      thresholds: {
+        motionThresh: number;
+        minArea: number;
+      };
+      stats: {
+        validFrames: number;
+        areaMin: number;
+        areaMax: number;
+        centroidYMin: number;
+        centroidYMax: number;
+        bottomBandEnergyMin: number;
+        bottomBandEnergyMax: number;
+      };
+    };
+    foot?: {
+      notes: string[];
+      thresholds: {
+        motionThresh: number;
+        darkThresh?: number;
+        minFootArea: number;
+        groundBandPx: number;
+      };
+      stats: {
+        validFrames: number;
+        areaMin: number;
+        areaMax: number;
+        angleMin: number;
+        angleMax: number;
+        strikeBiasMin: number;
+        strikeBiasMax: number;
+        groundBandDensityMin: number;
+        groundBandDensityMax: number;
+      };
+      eventSignals?: {
+        takeoff?: {
+          tMs: number;
+          contactScore?: number;
+          bottomBandEnergy?: number;
+          groundBandDensity?: number;
+        };
+        landing?: {
+          tMs: number;
+          contactScore?: number;
+          bottomBandEnergy?: number;
+          groundBandDensity?: number;
+        };
+      };
     };
   };
 
@@ -192,7 +287,7 @@ export const EMPTY_ANALYSIS: JumpAnalysis = {
   },
   frames: [],
   groundSummary: ground0,
-  
+  capture: {},
   quality: {
     overallConfidence: 0,
     notes: [],
@@ -201,6 +296,13 @@ export const EMPTY_ANALYSIS: JumpAnalysis = {
       groundDetected: false,
       jointsTracked: false,
       contactDetected: false,
+    },
+    pipelineDebug: {
+      groundConfidence: 0,
+      roiConfidence: 0,
+      contactConfidence: 0,
+      eventConfidence: 0,
+      rejectionReasons: [],
     },
   },
   aiSummary: { text: "", tags: [] },
