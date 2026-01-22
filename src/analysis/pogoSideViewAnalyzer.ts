@@ -368,6 +368,9 @@ function lumaAt(data: Uint8ClampedArray, idx: number) {
 }
 
 function extractRoiLuma(frame: PixelFrame, roi: { x: number; y: number; w: number; h: number }) {
+  if (!frame.data || frame.data.length === 0) {
+    throw new Error(`frame_decode: empty data at tMs=${frame.tMs}`);
+  }
   const luma = new Float32Array(roi.w * roi.h);
   let ptr = 0;
   for (let y = 0; y < roi.h; y += 1) {
@@ -780,6 +783,45 @@ function buildSlowMoFailure(note: string, nominalFps?: number): JumpAnalysis {
   };
 }
 
+function buildStructuredFailure(
+  note: string,
+  code: string,
+  stage: string,
+  measurementStatus: MeasurementStatus,
+  nominalFps?: number
+): JumpAnalysis {
+  return {
+    ...EMPTY_ANALYSIS,
+    status: "error",
+    measurementStatus,
+    error: { message: note, code },
+    capture: {
+      nominalFps,
+    },
+    quality: {
+      overallConfidence: 0,
+      notes: [note],
+      reliability: {
+        viewOk: false,
+        groundDetected: false,
+        jointsTracked: false,
+        contactDetected: false,
+      },
+      pipelineDebug: {
+        groundConfidence: 0,
+        footPatchConfidence: 0,
+        contactConfidence: 0,
+        eventConfidence: 0,
+        rejectionReasons: [`${stage}: ${code}`],
+      },
+    },
+    aiSummary: {
+      text: note,
+      tags: [code, stage],
+    },
+  };
+}
+
 export async function analyzePogoSideView(
   uri: string,
   config: GroundRoiConfig = {}
@@ -796,6 +838,27 @@ export async function analyzePogoSideView(
 
   if (nominalFps < SLOW_MO_FPS_THRESHOLD) {
     return buildSlowMoFailure("Requires iPhone Slo-Mo (≥120fps).", nominalFps);
+  }
+
+  if (pixelFrames.length < 2) {
+    return buildStructuredFailure(
+      "Insufficient frames for analysis.",
+      "INSUFFICIENT_FRAMES",
+      "frame_sampling",
+      measurementStatus,
+      nominalFps
+    );
+  }
+
+  const hasInvalidFrameData = pixelFrames.some((frame) => !frame.data || frame.data.length === 0);
+  if (hasInvalidFrameData) {
+    return buildStructuredFailure(
+      "Frame decode failed: empty pixel data.",
+      "FRAME_DECODE_FAILED",
+      "frame_decode",
+      measurementStatus,
+      nominalFps
+    );
   }
 
   const extractedFrames =

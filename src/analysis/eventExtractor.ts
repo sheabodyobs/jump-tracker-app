@@ -252,6 +252,12 @@ function applyPlausibilityBounds(
   let rejectedCount = 0;
 
   const validHops = hops.filter((hop) => {
+    if (hop.flightMs === null) {
+      reasons['incomplete_hop'] = (reasons['incomplete_hop'] ?? 0) + 1;
+      rejectedCount++;
+      return false;
+    }
+
     // Check GCT bounds
     if (hop.gctMs < options.minGctMs) {
       reasons['gct_too_short'] = (reasons['gct_too_short'] ?? 0) + 1;
@@ -266,18 +272,16 @@ function applyPlausibilityBounds(
     }
 
     // Check flight bounds (if available)
-    if (hop.flightMs !== null) {
-      if (hop.flightMs < options.minFlightMs) {
-        reasons['flight_too_short'] = (reasons['flight_too_short'] ?? 0) + 1;
-        rejectedCount++;
-        return false;
-      }
+    if (hop.flightMs < options.minFlightMs) {
+      reasons['flight_too_short'] = (reasons['flight_too_short'] ?? 0) + 1;
+      rejectedCount++;
+      return false;
+    }
 
-      if (hop.flightMs > options.maxFlightMs) {
-        reasons['flight_too_long'] = (reasons['flight_too_long'] ?? 0) + 1;
-        rejectedCount++;
-        return false;
-      }
+    if (hop.flightMs > options.maxFlightMs) {
+      reasons['flight_too_long'] = (reasons['flight_too_long'] ?? 0) + 1;
+      rejectedCount++;
+      return false;
     }
 
     return true;

@@ -160,27 +160,29 @@ export async function clearVideoLabels(videoUri: string): Promise<void> {
 function matchEvents(
   labels: Label[],
   autoEvents: AutoEvent[],
-  toleranceMs: number = 50
+  toleranceMs: number = 30
 ): {
   matched: MatchedPair[];
   unmatchedLabels: Label[];
   unmatchedAuto: AutoEvent[];
 } {
+  const sortedLabels = [...labels].sort((a, b) => a.tMs - b.tMs);
+  const sortedAuto = [...autoEvents].sort((a, b) => (a.refinedTMs ?? a.tMs) - (b.refinedTMs ?? b.tMs));
   const matched: MatchedPair[] = [];
   const usedLabels = new Set<number>();
   const usedAuto = new Set<number>();
 
   // For each label, find nearest auto within tolerance
-  for (let i = 0; i < labels.length; i++) {
-    const label = labels[i];
+  for (let i = 0; i < sortedLabels.length; i++) {
+    const label = sortedLabels[i];
     let bestAuto = -1;
     let bestError = toleranceMs;
     let usedRefinedForBest = false;
 
-    for (let j = 0; j < autoEvents.length; j++) {
+    for (let j = 0; j < sortedAuto.length; j++) {
       if (usedAuto.has(j)) continue;
 
-      const auto = autoEvents[j];
+      const auto = sortedAuto[j];
       if (auto.type !== label.type) continue;
 
       // Prefer refined timestamp if available, otherwise use frame-based
@@ -195,7 +197,7 @@ function matchEvents(
     }
 
     if (bestAuto >= 0) {
-      const autoEvent = autoEvents[bestAuto];
+      const autoEvent = sortedAuto[bestAuto];
       const errorMs = (autoEvent.refinedTMs ?? autoEvent.tMs) - label.tMs;
       
       matched.push({
@@ -209,8 +211,8 @@ function matchEvents(
     }
   }
 
-  const unmatchedLabels = labels.filter((_, i) => !usedLabels.has(i));
-  const unmatchedAuto = autoEvents.filter((_, i) => !usedAuto.has(i));
+  const unmatchedLabels = sortedLabels.filter((_, i) => !usedLabels.has(i));
+  const unmatchedAuto = sortedAuto.filter((_, i) => !usedAuto.has(i));
 
   return { matched, unmatchedLabels, unmatchedAuto };
 }
@@ -256,7 +258,7 @@ function computeErrorMetrics(errors: number[]): ErrorMetrics {
 export function evaluateEvents(
   labels: Label[],
   autoEvents: AutoEvent[],
-  toleranceMs: number = 50
+  toleranceMs: number = 30
 ): EvaluationResult {
   const { matched, unmatchedLabels, unmatchedAuto } = matchEvents(labels, autoEvents, toleranceMs);
 
